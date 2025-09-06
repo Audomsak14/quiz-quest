@@ -108,6 +108,7 @@ export default function CreateNewSet() {
         {/* Sidebar: รายการข้อคำถาม */}
         <div className="w-64 min-w-[200px]">
           <div className="sticky top-24">
+            {/* ปุ่มเพิ่มคำถามใหม่ */}
             <div className="mb-6">
               <button
                 onClick={handleAddQuestion}
@@ -209,6 +210,29 @@ export default function CreateNewSet() {
                 />
               </div>
 
+              <div className="mb-4 flex items-center gap-2">
+                {/* Object/Icon selector inline */}
+                <div className="flex flex-col items-center gap-1 min-w-[110px]">
+                  <select
+                    value={questions[selectedQuestionIndex].icon || ""}
+                    onChange={e => handleQuestionChange(selectedQuestionIndex, "icon", e.target.value)}
+                    className="px-2 py-1 rounded-lg border text-[#610C9F] font-bold bg-white hover:bg-[#F5F3FF] cursor-pointer"
+                  >
+                    <option value="">เลือกอ็อบเจกต์</option>
+                    <option value="/globe.svg">Globe</option>
+                    <option value="/window.svg">Window</option>
+                    <option value="/file.svg">File</option>
+                  </select>
+                  {questions[selectedQuestionIndex].icon && (
+                    <img
+                      src={questions[selectedQuestionIndex].icon}
+                      alt="icon-object"
+                      className="w-8 h-8 object-contain rounded border shadow mt-1"
+                    />
+                  )}
+                </div>
+              </div>
+
               <div className="space-y-3">
                 {questions[selectedQuestionIndex].choices.map((choice, cIndex) => (
                   <div key={cIndex} className="flex items-center gap-3">
@@ -254,25 +278,55 @@ export default function CreateNewSet() {
         {/* Right Sidebar: ปรับแต่งคะแนนและเวลา */}
         <div className="w-64 min-w-[200px]">
           <div className="sticky top-24 bg-white rounded-lg shadow p-6 flex flex-col gap-6">
-            <div>
-            <label className="block text-base font-bold text-[#940B92] mb-2">คะแนนต่อข้อ</label>
-            <input
-              type="number"
-              min={0}
-              value={scorePerQuestion || 1}
-              onChange={e => setScorePerQuestion(Number(e.target.value))}
-              className="w-full p-2 border rounded-md text-[#940B92] font-semibold bg-white placeholder-[#DA0C81]"
-            />
+            {/* กำหนดจำนวนข้อในชุดคำถาม (moved here) */}
+            <div className="mb-2 bg-white/80 rounded-lg shadow p-4 flex flex-col gap-2">
+              <div className="font-bold text-[#610C9F] mb-1">กำหนดจำนวนข้อในชุดคำถาม</div>
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  className={`px-3 py-1 rounded-lg font-bold border transition-colors ${questions.length === 5 ? 'bg-[#DA0C81] text-white border-[#DA0C81]' : 'bg-white text-[#610C9F] border-[#610C9F] hover:bg-[#F5F3FF]'}`}
+                  onClick={() => setQuestions(Array(5).fill().map((_, i) => questions[i] || { text: '', choices: ['', '', '', ''], correct: 0 }))}
+                >
+                  5 ข้อ
+                </button>
+                <button
+                  type="button"
+                  className={`px-3 py-1 rounded-lg font-bold border transition-colors ${questions.length === 10 ? 'bg-[#DA0C81] text-white border-[#DA0C81]' : 'bg-white text-[#610C9F] border-[#610C9F] hover:bg-[#F5F3FF]'}`}
+                  onClick={() => setQuestions(Array(10).fill().map((_, i) => questions[i] || { text: '', choices: ['', '', '', ''], correct: 0 }))}
+                >
+                  10 ข้อ
+                </button>
+                <button
+                  type="button"
+                  className={`px-3 py-1 rounded-lg font-bold border transition-colors ${questions.length !== 5 && questions.length !== 10 ? 'bg-[#DA0C81] text-white border-[#DA0C81]' : 'bg-white text-[#610C9F] border-[#610C9F] hover:bg-[#F5F3FF]'}`}
+                  onClick={() => {}} // ไม่จำกัดจำนวน
+                >
+                  กำหนดเอง
+                </button>
+              </div>
+              <div className="text-sm text-[#940B92] mt-1">ขณะนี้: {questions.length} ข้อ</div>
             </div>
+            {/* คะแนนต่อข้อ */}
             <div>
-            <label className="block text-base font-bold text-[#E95793] mb-2">เวลาต่อข้อ (วินาที)</label>
-            <input
-              type="number"
-              min={0}
-              value={timePerQuestion || 30}
-              onChange={e => setTimePerQuestion(Number(e.target.value))}
-              className="w-full p-2 border rounded-md text-[#E95793] font-semibold bg-white placeholder-[#610C9F]"
-            />
+              <label className="block text-base font-bold text-[#940B92] mb-2">คะแนนต่อข้อ</label>
+              <input
+                type="number"
+                min={0}
+                value={scorePerQuestion || 1}
+                onChange={e => setScorePerQuestion(Number(e.target.value))}
+                className="w-full p-2 border rounded-md text-[#940B92] font-semibold bg-white placeholder-[#DA0C81]"
+              />
+            </div>
+            {/* เวลาต่อข้อ */}
+            <div>
+              <label className="block text-base font-bold text-[#E95793] mb-2">เวลาต่อข้อ (วินาที)</label>
+              <input
+                type="number"
+                min={0}
+                value={timePerQuestion || 30}
+                onChange={e => setTimePerQuestion(Number(e.target.value))}
+                className="w-full p-2 border rounded-md text-[#E95793] font-semibold bg-white placeholder-[#610C9F]"
+              />
             </div>
           </div>
         </div>

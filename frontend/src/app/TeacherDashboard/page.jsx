@@ -41,85 +41,98 @@ export default function TeacherDashboard() {
 
   if (isLoading) {
     return (
-      <div className="min-h-screen bg-gray-50 p-8">
-        <div className="animate-pulse text-center">กำลังโหลด...</div>
+      <div className="min-h-screen p-8 bg-gradient-to-b from-[#030637] via-[#180161] to-[#FF204E]">
+        <div className="animate-pulse text-white text-lg font-bold bg-white/10 backdrop-blur-sm rounded-xl p-4 shadow-lg">
+          กำลังโหลด...
+        </div>
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen bg-gray-50 p-8">
-      {/* Header */}
-      <div className="mb-8">
-        <h1 className="text-3xl font-bold text-gray-800">แดชบอร์ดครู</h1>
-        <p className="text-gray-600 mt-2">จัดการชุดคำถามและการทดสอบ</p>
+    <div className="min-h-screen p-8 bg-gradient-to-b from-[#030637] via-[#180161] to-[#FF204E]">
+      {/* Header - combined background */}
+      <div className="mb-8 flex flex-col items-start space-y-2 bg-white/90 backdrop-blur-sm px-8 py-5 rounded-2xl drop-shadow-[0_4px_16px_rgba(97,12,159,0.10)]">
+        <h1 className="text-4xl font-bold text-[#610C9F] drop-shadow-[0_4px_8px_rgba(97,12,159,0.5)]">
+          แดชบอร์ดครู
+        </h1>
+        <p className="text-xl text-[#940B92] font-semibold drop-shadow-[0_4px_8px_rgba(148,11,146,0.5)]">
+          จัดการชุดคำถามและการทดสอบ
+        </p>
       </div>
 
       {/* Stats Card */}
-      <div className="bg-white rounded-lg shadow-sm p-6 mb-8">
-        <div className="text-2xl font-semibold text-gray-800">
+      <div className="bg-white/95 backdrop-blur-sm rounded-2xl shadow-[0_8px_32px_rgba(97,12,159,0.2)] p-8 mb-8 transform hover:scale-[1.02] transition-all duration-300">
+        <div className="text-3xl font-bold bg-gradient-to-r from-[#610C9F] to-[#940B92] text-transparent bg-clip-text">
           {questionSets.length} ชุดคำถาม
         </div>
-        <p className="text-gray-600">ที่สร้างไว้ทั้งหมด</p>
+        <p className="text-lg text-[#DA0C81] mt-2">ที่สร้างไว้ทั้งหมด</p>
       </div>
 
       {/* Action Button */}
-      <div className="mb-6">
+      <div className="mb-8">
         <button
           onClick={() => router.push("/create-new-set")}
-          className="bg-blue-600 text-white px-6 py-3 rounded-lg hover:bg-blue-700 transition-colors flex items-center gap-2"
+          className="bg-gradient-to-r from-[#610C9F] to-[#940B92] text-white px-8 py-4 rounded-xl 
+                    hover:from-[#940B92] hover:to-[#DA0C81] transition-all duration-300 
+                    flex items-center gap-3 font-bold shadow-[0_4px_16px_rgba(97,12,159,0.3)]
+                    transform hover:scale-[1.02] active:scale-[0.98]"
         >
-          <FiPlus className="w-5 h-5" />
+          <FiPlus className="w-6 h-6" />
           สร้างชุดคำถามใหม่
         </button>
       </div>
 
       {/* Question Sets Table */}
-      <div className="bg-white rounded-lg shadow-sm overflow-hidden">
-        <table className="min-w-full divide-y divide-gray-200">
-          <thead className="bg-gray-50">
+      <div className="bg-white/95 backdrop-blur-sm rounded-2xl shadow-[0_8px_32px_rgba(97,12,159,0.2)] overflow-hidden">
+        <table className="min-w-full divide-y divide-[#F5F3FF]">
+          <thead className="bg-gradient-to-r from-[#610C9F] to-[#940B92]">
             <tr>
-              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+              <th className="px-8 py-4 text-left text-sm font-bold text-white uppercase tracking-wider">
                 ชื่อชุดคำถาม
               </th>
-              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+              <th className="px-8 py-4 text-left text-sm font-bold text-white uppercase tracking-wider">
                 จำนวนคำถาม
               </th>
-              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+              <th className="px-8 py-4 text-left text-sm font-bold text-white uppercase tracking-wider">
                 วันที่สร้าง
               </th>
-              <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
+              <th className="px-8 py-4 text-right text-sm font-bold text-white uppercase tracking-wider">
                 จัดการ
               </th>
             </tr>
           </thead>
-          <tbody className="bg-white divide-y divide-gray-200">
+          <tbody className="bg-white/80 divide-y divide-[#F5F3FF]">
             {questionSets.map((set) => (
-              <tr key={set._id} className="hover:bg-gray-50">
-                <td className="px-6 py-4 whitespace-nowrap">
-                  <div className="text-sm font-medium text-gray-900">{set.title}</div>
+              <tr key={set._id} className="hover:bg-[#F5F3FF]/50 transition-colors duration-200">
+                <td className="px-8 py-5 whitespace-nowrap">
+                  <div className="text-base font-semibold text-[#610C9F]">{set.title}</div>
                 </td>
-                <td className="px-6 py-4 whitespace-nowrap">
-                  <div className="text-sm text-gray-500">{set.questions.length} คำถาม</div>
+                <td className="px-8 py-5 whitespace-nowrap">
+                  <div className="text-base text-[#940B92]">{set.questions.length} คำถาม</div>
                 </td>
-                <td className="px-6 py-4 whitespace-nowrap">
-                  <div className="text-sm text-gray-500">
+                <td className="px-8 py-5 whitespace-nowrap">
+                  <div className="text-base text-[#DA0C81]">
                     {new Date(set.createdAt).toLocaleDateString('th-TH')}
                   </div>
                 </td>
-                <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
-                  <button
-                    onClick={() => handleEdit(set._id)}
-                    className="text-indigo-600 hover:text-indigo-900 mr-4"
-                  >
-                    <FiEdit className="w-5 h-5" />
-                  </button>
-                  <button
-                    onClick={() => handleDelete(set._id)}
-                    className="text-red-600 hover:text-red-900"
-                  >
-                    <FiTrash2 className="w-5 h-5" />
-                  </button>
+                <td className="px-8 py-5 whitespace-nowrap text-right">
+                  <div className="flex items-center justify-end gap-4">
+                    <button
+                      onClick={() => handleEdit(set._id)}
+                      className="text-[#610C9F] hover:text-[#940B92] p-2 rounded-lg hover:bg-[#F5F3FF] transition-all"
+                      title="แก้ไข"
+                    >
+                      <FiEdit className="w-5 h-5" />
+                    </button>
+                    <button
+                      onClick={() => handleDelete(set._id)}
+                      className="text-[#DA0C81] hover:text-[#E95793] p-2 rounded-lg hover:bg-[#FFF1F6] transition-all"
+                      title="ลบ"
+                    >
+                      <FiTrash2 className="w-5 h-5" />
+                    </button>
+                  </div>
                 </td>
               </tr>
             ))}
