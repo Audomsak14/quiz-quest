@@ -15,6 +15,7 @@ export default function CreateNewSet() {
   const [timePerQuestion, setTimePerQuestion] = useState(30);
   const [isLoading, setIsLoading] = useState(false);
   const [selectedQuestionIndex, setSelectedQuestionIndex] = useState(0);
+  const [selectedMap, setSelectedMap] = useState("/map1.png"); // default map
 
   useEffect(() => {
     if (editId) {
@@ -24,11 +25,17 @@ export default function CreateNewSet() {
 
   const fetchQuestionSet = async () => {
     try {
-      const res = await axios.get(`http://localhost:5000/api/questions/sets/${editId}`);
+      const res = await axios.get(`http://localhost:5000/api/questionsets/${editId}`);
       setTitle(res.data.title);
-      setQuestions(res.data.questions);
+      // map กลับเป็นรูปแบบที่ใช้ในฟอร์ม
+      setQuestions(res.data.questions.map(q => ({
+        text: q.title,
+        choices: q.options,
+        correct: q.options.findIndex(opt => opt === q.answer) ?? 0
+      })));
       setScorePerQuestion(res.data.scorePerQuestion);
       setTimePerQuestion(res.data.timePerQuestion);
+      setSelectedMap(res.data.map || "/map1.png");
     } catch (err) {
       console.error("Error fetching question set:", err);
     }
@@ -67,19 +74,28 @@ export default function CreateNewSet() {
       return;
     }
 
+    // แปลง questions ให้ตรงกับ schema backend
+    const questionsForBackend = questions.map(q => ({
+      title: q.text,
+      options: q.choices,
+      answer: q.choices[q.correct]
+    }));
+
     setIsLoading(true);
     try {
       if (editId) {
-        await axios.put(`http://localhost:5000/api/questions/sets/${editId}`, {
+        await axios.put(`http://localhost:5000/api/questionsets/${editId}`, {
           title,
-          questions,
+          map: selectedMap,
+          questions: questionsForBackend,
           scorePerQuestion,
           timePerQuestion
         });
       } else {
-        await axios.post("http://localhost:5000/api/questions/sets", {
+        await axios.post("http://localhost:5000/api/questionsets", {
           title,
-          questions,
+          map: selectedMap,
+          questions: questionsForBackend,
           scorePerQuestion,
           timePerQuestion
         });
@@ -210,29 +226,6 @@ export default function CreateNewSet() {
                 />
               </div>
 
-              <div className="mb-4 flex items-center gap-2">
-                {/* Object/Icon selector inline */}
-                <div className="flex flex-col items-center gap-1 min-w-[110px]">
-                  <select
-                    value={questions[selectedQuestionIndex].icon || ""}
-                    onChange={e => handleQuestionChange(selectedQuestionIndex, "icon", e.target.value)}
-                    className="px-2 py-1 rounded-lg border text-[#610C9F] font-bold bg-white hover:bg-[#F5F3FF] cursor-pointer"
-                  >
-                    <option value="">เลือกอ็อบเจกต์</option>
-                    <option value="/globe.svg">Globe</option>
-                    <option value="/window.svg">Window</option>
-                    <option value="/file.svg">File</option>
-                  </select>
-                  {questions[selectedQuestionIndex].icon && (
-                    <img
-                      src={questions[selectedQuestionIndex].icon}
-                      alt="icon-object"
-                      className="w-8 h-8 object-contain rounded border shadow mt-1"
-                    />
-                  )}
-                </div>
-              </div>
-
               <div className="space-y-3">
                 {questions[selectedQuestionIndex].choices.map((choice, cIndex) => (
                   <div key={cIndex} className="flex items-center gap-3">
@@ -278,6 +271,26 @@ export default function CreateNewSet() {
         {/* Right Sidebar: ปรับแต่งคะแนนและเวลา */}
         <div className="w-64 min-w-[200px]">
           <div className="sticky top-24 bg-white rounded-lg shadow p-6 flex flex-col gap-6">
+            {/* เลือกแมพ */}
+            <div className="mb-4">
+              <label className="block text-base font-bold text-[#610C9F] mb-2">เลือกแมพ</label>
+              <select
+                value={selectedMap}
+                onChange={e => setSelectedMap(e.target.value)}
+                className="w-full p-2 border rounded-md text-[#610C9F] font-semibold bg-white hover:bg-[#F5F3FF] cursor-pointer mb-2"
+              >
+                <option value="/map1.png">แมพป่า (Forest)</option>
+                <option value="/map2.png">แมพทะเล (Sea)</option>
+                <option value="/map3.png">แมพเมือง (City)</option>
+              </select>
+              <div className="flex justify-center">
+                <img
+                  src={selectedMap}
+                  alt="preview-map"
+                  className="w-32 h-20 object-cover rounded shadow border"
+                />
+              </div>
+            </div>
             {/* กำหนดจำนวนข้อในชุดคำถาม (moved here) */}
             <div className="mb-2 bg-white/80 rounded-lg shadow p-4 flex flex-col gap-2">
               <div className="font-bold text-[#610C9F] mb-1">กำหนดจำนวนข้อในชุดคำถาม</div>
@@ -287,14 +300,14 @@ export default function CreateNewSet() {
                   className={`px-3 py-1 rounded-lg font-bold border transition-colors ${questions.length === 5 ? 'bg-[#DA0C81] text-white border-[#DA0C81]' : 'bg-white text-[#610C9F] border-[#610C9F] hover:bg-[#F5F3FF]'}`}
                   onClick={() => setQuestions(Array(5).fill().map((_, i) => questions[i] || { text: '', choices: ['', '', '', ''], correct: 0 }))}
                 >
-                  5 ข้อ
+                  5
                 </button>
                 <button
                   type="button"
                   className={`px-3 py-1 rounded-lg font-bold border transition-colors ${questions.length === 10 ? 'bg-[#DA0C81] text-white border-[#DA0C81]' : 'bg-white text-[#610C9F] border-[#610C9F] hover:bg-[#F5F3FF]'}`}
                   onClick={() => setQuestions(Array(10).fill().map((_, i) => questions[i] || { text: '', choices: ['', '', '', ''], correct: 0 }))}
                 >
-                  10 ข้อ
+                  10
                 </button>
                 <button
                   type="button"

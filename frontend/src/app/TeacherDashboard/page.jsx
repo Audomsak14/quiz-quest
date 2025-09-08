@@ -15,7 +15,7 @@ export default function TeacherDashboard() {
 
   const fetchQuestionSets = async () => {
     try {
-      const res = await axios.get("http://localhost:5000/api/questions/sets");
+      const res = await axios.get("http://localhost:5000/api/questionsets");
       setQuestionSets(res.data);
     } catch (err) {
       console.error("Error fetching question sets:", err);
@@ -27,7 +27,7 @@ export default function TeacherDashboard() {
   const handleDelete = async (setId) => {
     if (window.confirm("คุณแน่ใจหรือไม่ที่จะลบชุดคำถามนี้?")) {
       try {
-        await axios.delete(`http://localhost:5000/api/questions/sets/${setId}`);
+        await axios.delete(`http://localhost:5000/api/questionsets/${setId}`);
         fetchQuestionSets(); // รีเฟรชข้อมูล
       } catch (err) {
         console.error("Error deleting question set:", err);
