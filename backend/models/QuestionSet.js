@@ -1,4 +1,5 @@
 import mongoose from "mongoose";
+<<<<<<< HEAD
 
 const questionSetSchema = new mongoose.Schema({
   title: { 
@@ -42,3 +43,17 @@ const questionSetSchema = new mongoose.Schema({
 });
 
 export default mongoose.model("QuestionSet", questionSetSchema);
+=======
+import { questionSchema } from "./Question.js";
+
+const QuestionSetSchema = new mongoose.Schema({
+  title: { type: String, required: true },
+  map: { type: String },
+  questions: [questionSchema],
+  scorePerQuestion: { type: Number, default: 1 },
+  timePerQuestion: { type: Number, default: 30 }
+}, { timestamps: true }); // สร้าง createdAt / updatedAt อัตโนมัติ
+
+const QuestionSet = mongoose.model("QuestionSet", QuestionSetSchema);
+export default QuestionSet;
+>>>>>>> afc79e6c7ebbef6df76f4cff30c69ff4151a32ab

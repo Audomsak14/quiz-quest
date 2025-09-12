@@ -5,6 +5,7 @@ import cors from "cors";
 import authRoutes from "./routes/auth.js";
 import questionRoutes from "./routes/questions.js";
 import roomRoutes from "./routes/rooms.js";
+import questionSetRoutes from "./routes/questionSetRoutes.js";
 
 const app = express();
 app.use(cors());
@@ -19,5 +20,6 @@ mongoose.connect("mongodb://127.0.0.1:27017/quizapp")
 app.use("/api/auth", authRoutes);
 app.use("/api/questions", questionRoutes);
 app.use("/api/rooms", roomRoutes);
+app.use("/api/questionsets", questionSetRoutes);
 
 app.listen(5000, () => console.log("Server running on port 5000"));
