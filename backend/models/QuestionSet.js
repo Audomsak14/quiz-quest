@@ -1,59 +1,58 @@
 import mongoose from "mongoose";
-<<<<<<< HEAD
 
 const questionSetSchema = new mongoose.Schema({
-  title: { 
-    type: String, 
+  title: {
+    type: String,
     required: true,
     trim: true
   },
-  description: { 
-    type: String, 
-    default: ""
+  description: {
+    type: String,
+    trim: true
   },
   questions: [{
-    question: { type: String, required: true },
-    options: { type: [String], required: true },
-    correctAnswer: { type: String, required: true },
-    type: { 
-      type: String, 
-      enum: ['multiple-choice', 'true-false'], 
-      default: 'multiple-choice' 
+    question: {
+      type: String,
+      required: true
+    },
+    type: {
+      type: String,
+      enum: ['multiple-choice', 'true-false', 'short-answer'],
+      default: 'multiple-choice'
+    },
+    options: [{
+      type: String
+    }],
+    correctAnswer: {
+      type: mongoose.Schema.Types.Mixed,
+      required: true
+    },
+    points: {
+      type: Number,
+      default: 1
     }
   }],
-  createdBy: {
-    type: String, // จะเปลี่ยนเป็น ObjectId ถ้ามี User model
-    required: true
+  difficulty: {
+    type: String,
+    enum: ['easy', 'medium', 'hard'],
+    default: 'medium'
+  },
+  timeLimit: {
+    type: Number,
+    default: 30
   },
   isActive: {
     type: Boolean,
     default: true
   },
-  timeLimit: {
-    type: Number, // เป็นวินาที
-    default: 30
-  },
-  difficulty: {
+  createdBy: {
     type: String,
-    enum: ['easy', 'medium', 'hard'],
-    default: 'medium'
+    required: true
   }
 }, {
-  timestamps: true // จะสร้าง createdAt และ updatedAt อัตโนมัติ
+  timestamps: true
 });
 
-export default mongoose.model("QuestionSet", questionSetSchema);
-=======
-import { questionSchema } from "./Question.js";
+const QuestionSet = mongoose.model("QuestionSet", questionSetSchema);
 
-const QuestionSetSchema = new mongoose.Schema({
-  title: { type: String, required: true },
-  map: { type: String },
-  questions: [questionSchema],
-  scorePerQuestion: { type: Number, default: 1 },
-  timePerQuestion: { type: Number, default: 30 }
-}, { timestamps: true }); // สร้าง createdAt / updatedAt อัตโนมัติ
-
-const QuestionSet = mongoose.model("QuestionSet", QuestionSetSchema);
 export default QuestionSet;
->>>>>>> afc79e6c7ebbef6df76f4cff30c69ff4151a32ab
