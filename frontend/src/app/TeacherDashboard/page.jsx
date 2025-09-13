@@ -1,8 +1,7 @@
 "use client";
 import { useState, useEffect } from "react";
-import axios from "axios";
 import { useRouter } from "next/navigation";
-import { FiEdit, FiTrash2, FiPlus } from "react-icons/fi";
+import axios from "axios";
 
 export default function TeacherDashboard() {
   const router = useRouter();
@@ -15,8 +14,8 @@ export default function TeacherDashboard() {
 
   const fetchQuestionSets = async () => {
     try {
-      const res = await axios.get("http://localhost:5000/api/questionsets");
-      setQuestionSets(res.data);
+      const response = await axios.get("http://localhost:5000/api/questions/sets");
+      setQuestionSets(response.data);
     } catch (err) {
       console.error("Error fetching question sets:", err);
     } finally {
@@ -27,7 +26,7 @@ export default function TeacherDashboard() {
   const handleDelete = async (setId) => {
     if (window.confirm("คุณแน่ใจหรือไม่ที่จะลบชุดคำถามนี้?")) {
       try {
-        await axios.delete(`http://localhost:5000/api/questionsets/${setId}`);
+        await axios.delete(`http://localhost:5000/api/questions/sets/${setId}`);
         fetchQuestionSets(); // รีเฟรชข้อมูล
       } catch (err) {
         console.error("Error deleting question set:", err);
@@ -39,105 +38,103 @@ export default function TeacherDashboard() {
     router.push(`/create-new-set?edit=${setId}`);
   };
 
+  const handleLogout = () => {
+    // ลบข้อมูลการเข้าสู่ระบบ
+    localStorage.removeItem('token');
+    localStorage.removeItem('user');
+    
+    // แจ้งเตือนและไปหน้า login
+    alert('ออกจากระบบสำเร็จ');
+    router.push('/login');
+  };
+
   if (isLoading) {
     return (
-      <div className="min-h-screen p-8 bg-gradient-to-b from-[#030637] via-[#180161] to-[#FF204E]">
-        <div className="animate-pulse text-white text-lg font-bold bg-white/10 backdrop-blur-sm rounded-xl p-4 shadow-lg">
-          กำลังโหลด...
-        </div>
+      <div className="min-h-screen bg-gradient-to-b from-[#030637] via-[#180161] to-[#FF204E] flex items-center justify-center">
+        <div className="text-white text-xl">กำลังโหลด...</div>
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen p-8 bg-gradient-to-b from-[#030637] via-[#180161] to-[#FF204E]">
-      {/* Header - combined background */}
-      <div className="mb-8 flex flex-col items-start space-y-2 bg-white/90 backdrop-blur-sm px-8 py-5 rounded-2xl drop-shadow-[0_4px_16px_rgba(97,12,159,0.10)]">
-        <h1 className="text-4xl font-bold text-[#610C9F] drop-shadow-[0_4px_8px_rgba(97,12,159,0.5)]">
-          แดชบอร์ดครู
-        </h1>
-        <p className="text-xl text-[#940B92] font-semibold drop-shadow-[0_4px_8px_rgba(148,11,146,0.5)]">
-          จัดการชุดคำถามและการทดสอบ
-        </p>
+    <div className="min-h-screen bg-gradient-to-b from-[#030637] via-[#180161] to-[#FF204E] p-6">
+      {/* Header with Logout Button */}
+      <div className="bg-white/90 backdrop-blur-sm rounded-2xl shadow-xl p-6 mb-6">
+        <div className="flex justify-between items-center">
+          <div>
+            <h1 className="text-3xl font-bold text-gray-900 mb-2">แดชบอร์ดครู</h1>
+            <p className="text-gray-700 font-medium">จัดการชุดคำถามและการทดสอบ</p>
+          </div>
+          <button
+            onClick={handleLogout}
+            className="bg-red-500 hover:bg-red-600 text-white font-semibold py-2 px-6 rounded-lg transition-all duration-200 shadow-md hover:shadow-lg transform hover:scale-105"
+          >
+            🚪 ออกจากระบบ
+          </button>
+        </div>
       </div>
 
       {/* Stats Card */}
-      <div className="bg-white/95 backdrop-blur-sm rounded-2xl shadow-[0_8px_32px_rgba(97,12,159,0.2)] p-8 mb-8 transform hover:scale-[1.02] transition-all duration-300">
-        <div className="text-3xl font-bold bg-gradient-to-r from-[#610C9F] to-[#940B92] text-transparent bg-clip-text">
-          {questionSets.length} ชุดคำถาม
-        </div>
-        <p className="text-lg text-[#DA0C81] mt-2">ที่สร้างไว้ทั้งหมด</p>
+      <div className="bg-white/90 backdrop-blur-sm rounded-2xl shadow-xl p-6 mb-6">
+        <h2 className="text-2xl font-bold text-gray-900 mb-4">{questionSets.length} ชุดคำถาม</h2>
+        <p className="text-gray-700 font-medium">พีสร้างไว้ทั้งหมด</p>
       </div>
 
-      {/* Action Button */}
-      <div className="mb-8">
+      {/* Create New Question Set Button */}
+      <div className="mb-6">
         <button
-          onClick={() => router.push("/create-new-set")}
-          className="bg-gradient-to-r from-[#610C9F] to-[#940B92] text-white px-8 py-4 rounded-xl 
-                    hover:from-[#940B92] hover:to-[#DA0C81] transition-all duration-300 
-                    flex items-center gap-3 font-bold shadow-[0_4px_16px_rgba(97,12,159,0.3)]
-                    transform hover:scale-[1.02] active:scale-[0.98]"
+          onClick={() => router.push('/create-new-set')}
+          className="bg-gradient-to-r from-purple-500 to-pink-500 hover:from-purple-600 hover:to-pink-600 text-white font-semibold py-3 px-6 rounded-lg shadow-md hover:shadow-lg transition-all duration-200 transform hover:scale-105"
         >
-          <FiPlus className="w-6 h-6" />
-          สร้างชุดคำถามใหม่
+          ➕ สร้างชุดคำถามใหม่
         </button>
       </div>
 
       {/* Question Sets Table */}
-      <div className="bg-white/95 backdrop-blur-sm rounded-2xl shadow-[0_8px_32px_rgba(97,12,159,0.2)] overflow-hidden">
-        <table className="min-w-full divide-y divide-[#F5F3FF]">
-          <thead className="bg-gradient-to-r from-[#610C9F] to-[#940B92]">
-            <tr>
-              <th className="px-8 py-4 text-left text-sm font-bold text-white uppercase tracking-wider">
-                ชื่อชุดคำถาม
-              </th>
-              <th className="px-8 py-4 text-left text-sm font-bold text-white uppercase tracking-wider">
-                จำนวนคำถาม
-              </th>
-              <th className="px-8 py-4 text-left text-sm font-bold text-white uppercase tracking-wider">
-                วันที่สร้าง
-              </th>
-              <th className="px-8 py-4 text-right text-sm font-bold text-white uppercase tracking-wider">
-                จัดการ
-              </th>
-            </tr>
-          </thead>
-          <tbody className="bg-white/80 divide-y divide-[#F5F3FF]">
-            {questionSets.map((set) => (
-              <tr key={set._id} className="hover:bg-[#F5F3FF]/50 transition-colors duration-200">
-                <td className="px-8 py-5 whitespace-nowrap">
-                  <div className="text-base font-semibold text-[#610C9F]">{set.title}</div>
-                </td>
-                <td className="px-8 py-5 whitespace-nowrap">
-                  <div className="text-base text-[#940B92]">{set.questions.length} คำถาม</div>
-                </td>
-                <td className="px-8 py-5 whitespace-nowrap">
-                  <div className="text-base text-[#DA0C81]">
+      <div className="bg-white/90 backdrop-blur-sm rounded-2xl shadow-xl overflow-hidden">
+        <div className="bg-gradient-to-r from-purple-500 to-pink-500 text-white p-4">
+          <div className="grid grid-cols-4 gap-4 font-semibold">
+            <div>ชื่อชุดคำถาม</div>
+            <div>รายละเอียด</div>
+            <div>วันที่สร้าง</div>
+            <div>จัดการ</div>
+          </div>
+        </div>
+
+        <div className="divide-y divide-gray-200">
+          {questionSets.length === 0 ? (
+            <div className="p-8 text-center text-gray-500">
+              <p className="text-lg">ยังไม่มีชุดคำถาม</p>
+              <p>เริ่มต้นโดยการสร้างชุดคำถามแรกของคุณ</p>
+            </div>
+          ) : (
+            questionSets.map((set) => (
+              <div key={set._id} className="p-4 hover:bg-gray-50 transition-colors">
+                <div className="grid grid-cols-4 gap-4 items-center">
+                  <div className="font-semibold text-gray-900">{set.title}</div>
+                  <div className="text-gray-700">{set.description || "ไม่มีรายละเอียด"}</div>
+                  <div className="text-gray-600">
                     {new Date(set.createdAt).toLocaleDateString('th-TH')}
                   </div>
-                </td>
-                <td className="px-8 py-5 whitespace-nowrap text-right">
-                  <div className="flex items-center justify-end gap-4">
+                  <div className="flex space-x-2">
                     <button
                       onClick={() => handleEdit(set._id)}
-                      className="text-[#610C9F] hover:text-[#940B92] p-2 rounded-lg hover:bg-[#F5F3FF] transition-all"
-                      title="แก้ไข"
+                      className="bg-blue-500 hover:bg-blue-600 text-white px-3 py-1 rounded text-sm transition-colors"
                     >
-                      <FiEdit className="w-5 h-5" />
+                      แก้ไข
                     </button>
                     <button
                       onClick={() => handleDelete(set._id)}
-                      className="text-[#DA0C81] hover:text-[#E95793] p-2 rounded-lg hover:bg-[#FFF1F6] transition-all"
-                      title="ลบ"
+                      className="bg-red-500 hover:bg-red-600 text-white px-3 py-1 rounded text-sm transition-colors"
                     >
-                      <FiTrash2 className="w-5 h-5" />
+                      ลบ
                     </button>
                   </div>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+                </div>
+              </div>
+            ))
+          )}
+        </div>
       </div>
     </div>
   );
