@@ -4,118 +4,192 @@ import { useRouter } from "next/navigation";
 
 export default function StudentDashboard() {
   const router = useRouter();
-  const [username, setUsername] = useState("");
-  const [isLoading, setIsLoading] = useState(true);
+  const [isClient, setIsClient] = useState(false);
+  const [selectedCharacterName, setSelectedCharacterName] = useState("นักเรียน");
+  const [selectedCharacterEmoji, setSelectedCharacterEmoji] = useState("👨‍🎓");
 
-  useEffect(() => {
-    // ตรวจสอบว่าล็อกอินแล้วหรือยัง
-    const token = localStorage.getItem("token");
-    const role = localStorage.getItem("role");
-    const storedUsername = localStorage.getItem("username");
-    
-    if (!token || role !== "student") {
-      router.push("/login");
-      return;
+  // ฟังก์ชันโหลดข้อมูลตัวละคร
+  const loadCharacterData = () => {
+    if (typeof window !== 'undefined') {
+      const characterName = localStorage.getItem('selectedCharacterName');
+      const characterId = localStorage.getItem('selectedCharacter');
+      
+      console.log("Loading character data:", { characterName, characterId });
+      
+      if (characterName) {
+        setSelectedCharacterName(characterName);
+      } else {
+        setSelectedCharacterName("นักเรียน");
+      }
+
+      // กำหนด emoji ตามตัวละครที่เลือก
+      if (characterId) {
+        const characters = [
+          "🗡️", "🔮", "🏹", "🧙‍♂️", "🥷", "⚔️", 
+          "👊", "🔪", "🙏", "🌿", "⚡", "🎵"
+        ];
+        const emoji = characters[parseInt(characterId)] || "👨‍🎓";
+        console.log("Setting emoji:", emoji);
+        setSelectedCharacterEmoji(emoji);
+      } else {
+        setSelectedCharacterEmoji("👨‍🎓");
+      }
     }
-    
-    setUsername(storedUsername || "");
-    setIsLoading(false);
-  }, [router]);
-
-  const handleLogout = () => {
-    localStorage.removeItem("token");
-    localStorage.removeItem("role");
-    localStorage.removeItem("username");
-    router.push("/login");
   };
 
-  if (isLoading) {
+  useEffect(() => {
+    setIsClient(true);
+    loadCharacterData();
+
+    // ตั้ง interval เพื่อเช็คการเปลี่ยนแปลงทุกๆ 1 วินาที
+    const interval = setInterval(() => {
+      loadCharacterData();
+    }, 1000);
+
+    // ฟัง visibility change (เมื่อ tab กลับมา active)
+    const handleVisibilityChange = () => {
+      if (!document.hidden) {
+        setTimeout(loadCharacterData, 100);
+      }
+    };
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+
+    // ฟัง page show event
+    const handlePageShow = () => {
+      setTimeout(loadCharacterData, 100);
+    };
+    window.addEventListener('pageshow', handlePageShow);
+
+    return () => {
+      clearInterval(interval);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      window.removeEventListener('pageshow', handlePageShow);
+    };
+  }, []);
+
+  // เพิ่ม useEffect สำหรับโหลดข้อมูลเมื่อ component mount อีกครั้ง
+  useEffect(() => {
+    if (isClient) {
+      const timer = setTimeout(() => {
+        loadCharacterData();
+      }, 500);
+      return () => clearTimeout(timer);
+    }
+  }, [isClient]);
+
+  const handleLogout = () => {
+    if (typeof window !== 'undefined') {
+      localStorage.removeItem('token');
+      localStorage.removeItem('user');
+      localStorage.removeItem('selectedCharacter');
+      localStorage.removeItem('selectedCharacterName');
+      alert('ออกจากระบบสำเร็จ');
+      router.push('/login');
+    }
+  };
+
+  const handleCharacterSelection = () => {
+    router.push('/StudentDashboard/character');
+  };
+
+  if (!isClient) {
     return (
-      <div className="min-h-screen p-8 bg-gradient-to-b from-[#030637] via-[#180161] to-[#FF204E]">
-        <div className="animate-pulse text-white text-lg font-bold bg-white/10 backdrop-blur-sm rounded-xl p-4 shadow-lg">
-          กำลังโหลด...
-        </div>
+      <div className="min-h-screen bg-gradient-to-b from-[#030637] via-[#180161] to-[#FF204E] flex items-center justify-center">
+        <div className="text-white text-xl">กำลังโหลด...</div>
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen p-8 bg-gradient-to-b from-[#030637] via-[#180161] to-[#FF204E]">
+    <div className="min-h-screen bg-gradient-to-b from-[#030637] via-[#180161] to-[#FF204E] p-6">
       {/* Header */}
-      <div className="mb-8 flex flex-col md:flex-row justify-between items-start md:items-center space-y-2 md:space-y-0 bg-white/90 backdrop-blur-sm px-8 py-5 rounded-2xl drop-shadow-[0_4px_16px_rgba(97,12,159,0.10)]">
-        <div>
-          <h1 className="text-4xl font-bold text-[#610C9F] drop-shadow-[0_4px_8px_rgba(97,12,159,0.5)]">
-            แดชบอร์ดนักเรียน
-          </h1>
-          <p className="text-xl text-[#940B92] font-semibold drop-shadow-[0_4px_8px_rgba(148,11,146,0.5)]">
-            ยินดีต้อนรับ {username}
-          </p>
-        </div>
-        <button
-          onClick={handleLogout}
-          className="bg-gradient-to-r from-red-500 to-red-600 text-white px-6 py-3 rounded-xl hover:from-red-600 hover:to-red-700 transition-all duration-300 font-semibold shadow-lg"
-        >
-          ออกจากระบบ
-        </button>
-      </div>
-
-      {/* Content */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-        {/* Quiz Available Card */}
-        <div className="bg-white/95 backdrop-blur-sm rounded-2xl shadow-[0_8px_32px_rgba(97,12,159,0.2)] p-8 transform hover:scale-[1.02] transition-all duration-300">
-          <div className="text-center">
-            <div className="w-16 h-16 bg-gradient-to-r from-[#610C9F] to-[#940B92] rounded-full flex items-center justify-center mx-auto mb-4">
-              <svg className="w-8 h-8 text-white" fill="currentColor" viewBox="0 0 20 20">
-                <path fillRule="evenodd" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" clipRule="evenodd" />
-              </svg>
+      <div className="bg-white/90 backdrop-blur-sm rounded-2xl shadow-xl p-6 mb-6">
+        <div className="flex justify-between items-center">
+          <div className="flex items-center space-x-4">
+            {/* แสดงตัวละครที่เลือก */}
+            <div className="w-16 h-16 bg-gradient-to-br from-purple-400 to-pink-500 rounded-full flex items-center justify-center shadow-lg">
+              <span className="text-2xl">{selectedCharacterEmoji}</span>
             </div>
-            <h3 className="text-2xl font-bold text-[#610C9F] mb-2">แบบทดสอบ</h3>
-            <p className="text-[#940B92] mb-4">เข้าร่วมแบบทดสอบออนไลน์</p>
-            <button className="bg-gradient-to-r from-[#610C9F] to-[#940B92] text-white px-6 py-3 rounded-lg hover:from-[#940B92] hover:to-[#DA0C81] transition-all duration-300 font-semibold">
-              เข้าร่วมแบบทดสอบ
-            </button>
-          </div>
-        </div>
-
-        {/* Results Card */}
-        <div className="bg-white/95 backdrop-blur-sm rounded-2xl shadow-[0_8px_32px_rgba(97,12,159,0.2)] p-8 transform hover:scale-[1.02] transition-all duration-300">
-          <div className="text-center">
-            <div className="w-16 h-16 bg-gradient-to-r from-[#940B92] to-[#DA0C81] rounded-full flex items-center justify-center mx-auto mb-4">
-              <svg className="w-8 h-8 text-white" fill="currentColor" viewBox="0 0 20 20">
-                <path fillRule="evenodd" d="M3 4a1 1 0 011-1h12a1 1 0 011 1v2a1 1 0 01-1 1H4a1 1 0 01-1-1V4zM3 10a1 1 0 011-1h6a1 1 0 011 1v6a1 1 0 01-1 1H4a1 1 0 01-1-1v-6zM14 9a1 1 0 00-1 1v6a1 1 0 001 1h2a1 1 0 001-1v-6a1 1 0 00-1-1h-2z" clipRule="evenodd" />
-              </svg>
+            <div>
+              <h1 className="text-3xl font-bold text-gray-900 mb-2">แดชบอร์ดนักเรียน</h1>
+              <p className="text-gray-700 font-medium">ยินดีต้อนรับ {selectedCharacterName}</p>
             </div>
-            <h3 className="text-2xl font-bold text-[#610C9F] mb-2">ผลคะแนน</h3>
-            <p className="text-[#940B92] mb-4">ดูผลคะแนนการทดสอบ</p>
-            <button className="bg-gradient-to-r from-[#940B92] to-[#DA0C81] text-white px-6 py-3 rounded-lg hover:from-[#DA0C81] hover:to-[#E95793] transition-all duration-300 font-semibold">
-              ดูผลคะแนน
-            </button>
           </div>
-        </div>
-
-        {/* Profile Card */}
-        <div className="bg-white/95 backdrop-blur-sm rounded-2xl shadow-[0_8px_32px_rgba(97,12,159,0.2)] p-8 transform hover:scale-[1.02] transition-all duration-300">
-          <div className="text-center">
-            <div className="w-16 h-16 bg-gradient-to-r from-[#DA0C81] to-[#E95793] rounded-full flex items-center justify-center mx-auto mb-4">
-              <svg className="w-8 h-8 text-white" fill="currentColor" viewBox="0 0 20 20">
-                <path fillRule="evenodd" d="M10 9a3 3 0 100-6 3 3 0 000 6zm-7 9a7 7 0 1114 0H3z" clipRule="evenodd" />
-              </svg>
-            </div>
-            <h3 className="text-2xl font-bold text-[#610C9F] mb-2">โปรไฟล์</h3>
-            <p className="text-[#940B92] mb-4">จัดการข้อมูลส่วนตัว</p>
-            <button className="bg-gradient-to-r from-[#DA0C81] to-[#E95793] text-white px-6 py-3 rounded-lg hover:from-[#E95793] hover:to-[#F06292] transition-all duration-300 font-semibold">
-              แก้ไขโปรไฟล์
-            </button>
-          </div>
+          <button
+            onClick={handleLogout}
+            className="bg-red-500 hover:bg-red-600 text-white font-semibold py-2 px-6 rounded-lg transition-all duration-200 shadow-md hover:shadow-lg transform hover:scale-105"
+          >
+            🚪 ออกจากระบบ
+          </button>
         </div>
       </div>
 
-      {/* Recent Activity */}
-      <div className="mt-8 bg-white/95 backdrop-blur-sm rounded-2xl shadow-[0_8px_32px_rgba(97,12,159,0.2)] p-8">
-        <h2 className="text-2xl font-bold text-[#610C9F] mb-6">กิจกรรมล่าสุด</h2>
-        <div className="text-center py-8">
-          <p className="text-[#940B92] text-lg">ยังไม่มีกิจกรรมล่าสุด</p>
-          <p className="text-[#DA0C81] mt-2">เริ่มทำแบบทดสอบเพื่อดูประวัติการทำงาน</p>
+      {/* Debug Info */}
+      <div className="bg-blue-100 border border-blue-400 text-blue-700 px-4 py-3 rounded mb-4">
+        <p className="text-sm">
+          Debug: Character = {selectedCharacterName} ({selectedCharacterEmoji}) | 
+          localStorage: {typeof window !== 'undefined' ? localStorage.getItem('selectedCharacterName') || 'none' : 'not available'}
+        </p>
+      </div>
+
+      {/* Main Content Cards */}
+      <div className="grid md:grid-cols-3 gap-6 mb-8">
+        {/* แบบทดสอบ */}
+        <div className="bg-white/90 backdrop-blur-sm rounded-2xl shadow-xl p-8 text-center hover:scale-105 transition-all duration-300">
+          <div className="w-20 h-20 bg-gradient-to-br from-purple-400 to-purple-600 rounded-full flex items-center justify-center mx-auto mb-4 shadow-lg">
+            <svg className="w-10 h-10 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+            </svg>
+          </div>
+          <h2 className="text-2xl font-bold text-gray-900 mb-2">แบบทดสอบ</h2>
+          <p className="text-gray-700 mb-4">เข้าร่วมแบบทดสอบออนไลน์</p>
+          <button className="bg-gradient-to-r from-purple-500 to-purple-600 hover:from-purple-600 hover:to-purple-700 text-white font-semibold py-3 px-6 rounded-lg shadow-md hover:shadow-lg transition-all duration-200 transform hover:scale-105">
+            เข้าร่วมแบบทดสอบ
+          </button>
+        </div>
+
+        {/* ผลคะแนน */}
+        <div className="bg-white/90 backdrop-blur-sm rounded-2xl shadow-xl p-8 text-center hover:scale-105 transition-all duration-300">
+          <div className="w-20 h-20 bg-gradient-to-br from-pink-400 to-pink-600 rounded-full flex items-center justify-center mx-auto mb-4 shadow-lg">
+            <svg className="w-10 h-10 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
+            </svg>
+          </div>
+          <h2 className="text-2xl font-bold text-gray-900 mb-2">ผลคะแนน</h2>
+          <p className="text-gray-700 mb-4">ดูผลคะแนนการทดสอบ</p>
+          <button className="bg-gradient-to-r from-pink-500 to-pink-600 hover:from-pink-600 hover:to-pink-700 text-white font-semibold py-3 px-6 rounded-lg shadow-md hover:shadow-lg transition-all duration-200 transform hover:scale-105">
+            ดูผลคะแนน
+          </button>
+        </div>
+
+        {/* เลือกตัวละคร */}
+        <div className="bg-white/90 backdrop-blur-sm rounded-2xl shadow-xl p-8 text-center hover:scale-105 transition-all duration-300">
+          <div className="w-20 h-20 bg-gradient-to-br from-red-400 to-pink-500 rounded-full flex items-center justify-center mx-auto mb-4 shadow-lg">
+            <span className="text-3xl">{selectedCharacterEmoji}</span>
+          </div>
+          <h2 className="text-2xl font-bold text-gray-900 mb-2">เลือกตัวละคร</h2>
+          <p className="text-gray-700 mb-4">จัดการตัวละครของคุณ</p>
+          <button 
+            onClick={handleCharacterSelection}
+            className="bg-gradient-to-r from-red-400 to-pink-500 hover:from-red-500 hover:to-pink-600 text-white font-semibold py-3 px-6 rounded-lg shadow-md hover:shadow-lg transition-all duration-200 transform hover:scale-105"
+          >
+            แก้ไขตัวละคร
+          </button>
+        </div>
+      </div>
+
+      {/* กิจกรรมล่าสุด */}
+      <div className="bg-white/90 backdrop-blur-sm rounded-2xl shadow-xl p-6">
+        <h2 className="text-2xl font-bold text-gray-900 mb-4">กิจกรรมล่าสุด</h2>
+        
+        <div className="text-center py-12">
+          <div className="w-16 h-16 bg-gray-200 rounded-full flex items-center justify-center mx-auto mb-4">
+            <svg className="w-8 h-8 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
+            </svg>
+          </div>
+          <p className="text-gray-500 text-lg font-medium">ยังไม่มีกิจกรรมล่าสุด</p>
+          <p className="text-gray-400 mt-2">เริ่มทำแบบทดสอบเพื่อดูประวัติการทำงาน</p>
         </div>
       </div>
     </div>
