@@ -145,13 +145,28 @@ export default function CreateNewSet() {
               </div>
             </div>
             
-            {/* Progress indicator */}
-            <div className="flex flex-col items-end gap-2">
-              <div className="text-sm text-blue-200 drop-shadow">ความคืบหน้า</div>
-              <div className="flex gap-1">
-                <div className={`w-3 h-3 rounded-full ${title ? 'bg-green-400' : 'bg-white/20'} transition-colors duration-300`}></div>
-                <div className={`w-3 h-3 rounded-full ${questions.some(q => q.text) ? 'bg-green-400' : 'bg-white/20'} transition-colors duration-300`}></div>
-                <div className={`w-3 h-3 rounded-full ${questions.every(q => q.text && q.choices.every(c => c)) ? 'bg-green-400' : 'bg-white/20'} transition-colors duration-300`}></div>
+            <div className="flex items-center gap-6">
+              {/* Back Button */}
+              <button
+                onClick={() => router.push('/TeacherDashboard')}
+                className="flex items-center gap-3 text-white hover:text-pink-300 transition-colors duration-300 group bg-white/10 backdrop-blur-md rounded-2xl px-4 py-3 border border-white/20 hover:border-pink-300/50 shadow-xl hover:shadow-pink-500/25"
+              >
+                <div className="p-2 rounded-full bg-white/10 group-hover:bg-pink-500/20 transition-colors">
+                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 19l-7-7m0 0l7-7m-7 7h18" />
+                  </svg>
+                </div>
+                <span className="font-medium">ย้อนกลับ</span>
+              </button>
+              
+              {/* Progress indicator */}
+              <div className="flex flex-col items-end gap-2">
+                <div className="text-sm text-blue-200 drop-shadow">ความคืบหน้า</div>
+                <div className="flex gap-1">
+                  <div className={`w-3 h-3 rounded-full ${title ? 'bg-green-400' : 'bg-white/20'} transition-colors duration-300`}></div>
+                  <div className={`w-3 h-3 rounded-full ${questions.some(q => q.text) ? 'bg-green-400' : 'bg-white/20'} transition-colors duration-300`}></div>
+                  <div className={`w-3 h-3 rounded-full ${questions.every(q => q.text && q.choices.every(c => c)) ? 'bg-green-400' : 'bg-white/20'} transition-colors duration-300`}></div>
+                </div>
               </div>
             </div>
           </div>
