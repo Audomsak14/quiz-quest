@@ -1,10 +1,10 @@
 "use client";
-import { useState, useEffect } from "react";
+import { Suspense, useState, useEffect } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import axios from "axios";
 import { FiSave, FiX, FiPlus } from "react-icons/fi";
 
-export default function CreateNewSet() {
+function CreateNewSetContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const editId = searchParams.get("edit");
@@ -412,5 +412,13 @@ export default function CreateNewSet() {
         }
       `}</style>
     </div>
+  );
+}
+
+export default function CreateNewSet() {
+  return (
+    <Suspense fallback={<div className="min-h-screen flex items-center justify-center text-white">Loading...</div>}>
+      <CreateNewSetContent />
+    </Suspense>
   );
 }
