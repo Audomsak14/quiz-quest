@@ -1,5 +1,6 @@
 "use client";
 import { Suspense, useState, useEffect } from "react";
+import Swal from "sweetalert2";
 import { useRouter, useSearchParams } from "next/navigation";
 import axios from "axios";
 import { FiSave, FiX, FiPlus } from "react-icons/fi";
@@ -69,12 +70,12 @@ function CreateNewSetContent() {
 
   const handleSubmit = async () => {
     if (!title) {
-      alert("กรุณาใส่ชื่อชุดคำถาม");
+      await Swal.fire({ icon: 'warning', title: 'กรุณาใส่ชื่อชุดคำถาม' });
       return;
     }
 
     if (questions.some(q => !q.text || q.choices.some(c => !c))) {
-      alert("กรุณากรอกคำถามและตัวเลือกให้ครบ");
+      await Swal.fire({ icon: 'warning', title: 'กรุณากรอกคำถามและตัวเลือกให้ครบ' });
       return;
     }
 
@@ -114,14 +115,16 @@ function CreateNewSetContent() {
           `http://localhost:5000/api/questions/sets/${editId}`,
           payload
         );
+        await Swal.fire({ icon: 'success', title: 'อัปเดตชุดคำถามสำเร็จ', timer: 1200, showConfirmButton: false });
       } else {
         await axios.post("http://localhost:5000/api/questions/sets", payload);
+        await Swal.fire({ icon: 'success', title: 'บันทึกชุดคำถามสำเร็จ', timer: 1200, showConfirmButton: false });
       }
       router.push("/TeacherDashboard");
     } catch (err) {
       console.error("Error saving question set:", err);
       const backendMsg = err?.response?.data?.error || err?.response?.data?.message;
-      alert("เกิดข้อผิดพลาดในการบันทึกข้อมูล" + (backendMsg ? `: ${backendMsg}` : ""));
+      await Swal.fire({ icon: 'error', title: 'เกิดข้อผิดพลาดในการบันทึกข้อมูล', text: backendMsg || undefined });
     } finally {
       setIsLoading(false);
     }

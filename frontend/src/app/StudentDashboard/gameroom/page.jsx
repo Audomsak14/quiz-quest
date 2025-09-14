@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
+import Swal from 'sweetalert2';
 import { useRouter } from 'next/navigation';
 
 export default function GameRoom() {
@@ -82,15 +83,15 @@ export default function GameRoom() {
     setShowEditProfile(true);
   };
 
-  const handleJoinRoom = () => {
+  const handleJoinRoom = async () => {
     const room = gameRooms.find(r => r.code === roomCode.toUpperCase());
     if (room) {
       if (room.status === 'playing') {
-        alert('ห้องนี้กำลังเล่นอยู่ ไม่สามารถเข้าร่วมได้');
+        await Swal.fire({ icon: 'warning', title: 'ห้องกำลังเล่นอยู่', text: 'ไม่สามารถเข้าร่วมได้' });
         return;
       }
       if (room.players >= room.maxPlayers) {
-        alert('ห้องเต็มแล้ว ไม่สามารถเข้าร่วมได้');
+        await Swal.fire({ icon: 'warning', title: 'ห้องเต็มแล้ว', text: 'ไม่สามารถเข้าร่วมได้' });
         return;
       }
       // เข้าห้องสำเร็จ และเด้งไปหน้าเล่นเกม
@@ -98,18 +99,18 @@ export default function GameRoom() {
       setShowJoinRoom(false);
       router.push('/game');
     } else {
-      alert('ไม่พบห้องที่มีรหัสนี้');
+      await Swal.fire({ icon: 'warning', title: 'ไม่พบห้อง', text: 'ไม่พบห้องที่มีรหัสนี้' });
     }
   };
 
-  const handleJoinByRoomCode = () => {
+  const handleJoinByRoomCode = async () => {
     if (roomCode.trim()) {
       // เช็คว่ารหัสห้องไม่เป็นค่าว่าง
       setRoomCode('');
       setShowJoinRoom(false);
       router.push('/game');
     } else {
-      alert('กรุณากรอกรหัสห้อง');
+      await Swal.fire({ icon: 'warning', title: 'กรุณากรอกรหัสห้อง' });
     }
   };
 

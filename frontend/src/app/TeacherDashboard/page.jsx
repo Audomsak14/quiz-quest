@@ -1,5 +1,6 @@
 "use client";
 import { useState, useEffect } from "react";
+import Swal from "sweetalert2";
 import { useRouter } from "next/navigation";
 import axios from "axios";
 
@@ -24,12 +25,23 @@ export default function TeacherDashboard() {
   };
 
   const handleDelete = async (setId) => {
-    if (window.confirm("คุณแน่ใจหรือไม่ที่จะลบชุดคำถามนี้?")) {
+    const res = await Swal.fire({
+      title: "ยืนยันการลบ?",
+      text: "การลบนี้ไม่สามารถย้อนกลับได้",
+      icon: "warning",
+      showCancelButton: true,
+      confirmButtonText: "ลบ",
+      cancelButtonText: "ยกเลิก",
+      confirmButtonColor: "#ef4444",
+    });
+    if (res.isConfirmed) {
       try {
-  await axios.delete(`http://localhost:5000/api/questions/sets/${setId}`);
+        await axios.delete(`http://localhost:5000/api/questions/sets/${setId}`);
+        await Swal.fire({ icon: "success", title: "ลบสำเร็จ", timer: 1200, showConfirmButton: false });
         fetchQuestionSets(); // รีเฟรชข้อมูล
       } catch (err) {
         console.error("Error deleting question set:", err);
+        await Swal.fire({ icon: "error", title: "ลบไม่สำเร็จ", text: err.response?.data?.error || err.message });
       }
     }
   };
@@ -38,13 +50,10 @@ export default function TeacherDashboard() {
     router.push(`/create-new-set?edit=${setId}`);
   };
 
-  const handleLogout = () => {
-    // ลบข้อมูลการเข้าสู่ระบบ
+  const handleLogout = async () => {
     localStorage.removeItem('token');
     localStorage.removeItem('user');
-    
-    // แจ้งเตือนและไปหน้า login
-    alert('ออกจากระบบสำเร็จ');
+    await Swal.fire({ icon: 'success', title: 'ออกจากระบบสำเร็จ', timer: 1200, showConfirmButton: false });
     router.push('/login');
   };
 

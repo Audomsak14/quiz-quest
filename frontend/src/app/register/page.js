@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect } from "react";
+import Swal from "sweetalert2";
 import axios from "axios";
 import { useRouter } from "next/navigation";
 
@@ -19,13 +20,13 @@ export default function Register() {
   const handleRegister = async () => {
     // ตรวจสอบว่ารหัสผ่านตรงกันหรือไม่
     if (password !== confirmPassword) {
-      alert("รหัสผ่านไม่ตรงกัน กรุณาตรวจสอบอีกครั้ง");
+      await Swal.fire({ icon: 'warning', title: 'รหัสผ่านไม่ตรงกัน', text: 'กรุณาตรวจสอบอีกครั้ง' });
       return;
     }
 
     // ตรวจสอบความยาวรหัสผ่าน
     if (password.length < 6) {
-      alert("รหัสผ่านต้องมีอย่างน้อย 6 ตัวอักษร");
+      await Swal.fire({ icon: 'warning', title: 'รหัสผ่านสั้นเกินไป', text: 'ต้องมีอย่างน้อย 6 ตัวอักษร' });
       return;
     }
 
@@ -36,15 +37,11 @@ export default function Register() {
       localStorage.setItem("rememberedUsername", username);
       localStorage.setItem("rememberedPassword", password);
       
-      alert("สมัครสำเร็จ! กำลังพาไปหน้าเข้าสู่ระบบ");
-      
-      // ไปหน้า login หลังจาก 1.5 วินาที
-      setTimeout(() => {
-        router.push("/login");
-      }, 1500);
+      await Swal.fire({ icon: 'success', title: 'สมัครสำเร็จ!', timer: 1200, showConfirmButton: false });
+      router.push("/login");
       
     } catch (err) {
-      alert("สมัครไม่สำเร็จ: " + (err.response?.data?.error || err.message));
+  await Swal.fire({ icon: 'error', title: 'สมัครไม่สำเร็จ', text: err.response?.data?.error || err.message });
     }
   };
 

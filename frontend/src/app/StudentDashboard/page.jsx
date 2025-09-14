@@ -1,5 +1,6 @@
 "use client";
 import { useState, useEffect } from "react";
+import Swal from "sweetalert2";
 import { useRouter } from "next/navigation";
 
 export default function StudentDashboard() {
@@ -126,7 +127,7 @@ export default function StudentDashboard() {
     }
   }, [isClient]);
 
-  const handleLogout = () => {
+  const handleLogout = async () => {
     if (typeof window !== 'undefined') {
       localStorage.removeItem('token');
       localStorage.removeItem('user');
@@ -135,7 +136,7 @@ export default function StudentDashboard() {
       localStorage.removeItem('playerName');
       localStorage.removeItem('selectedCharacterImage');
       localStorage.removeItem('customCharacterImages');
-      alert('ออกจากระบบสำเร็จ');
+      await Swal.fire({ icon: 'success', title: 'ออกจากระบบสำเร็จ', timer: 1200, showConfirmButton: false });
       router.push('/login');
     }
   };

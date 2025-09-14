@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect } from "react";
+import Swal from "sweetalert2";
 import axios from "axios";
 import { useRouter } from "next/navigation";
 
@@ -55,7 +56,7 @@ export default function Login() {
         username: res.data.user.username
       });
       
-      alert("ล็อกอินสำเร็จ!");
+  await Swal.fire({ icon: 'success', title: 'ล็อกอินสำเร็จ!', timer: 1200, showConfirmButton: false });
       
       // นำทางไปแดชบอร์ดตาม role
       if (role === "teacher") {
@@ -67,9 +68,9 @@ export default function Login() {
       }
       
     } catch (err) {
-      console.error("❌ Login error:", err);
-      console.error("📋 Error response:", err.response?.data);
-      alert("ล็อกอินไม่สำเร็จ: " + (err.response?.data?.error || err.message));
+  console.error("❌ Login error:", err);
+  console.error("📋 Error response:", err.response?.data);
+  await Swal.fire({ icon: 'error', title: 'ล็อกอินไม่สำเร็จ', text: err.response?.data?.error || err.message });
     }
   };
 

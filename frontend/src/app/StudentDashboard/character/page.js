@@ -1,5 +1,6 @@
 "use client";
 import { useState, useEffect } from "react";
+import Swal from "sweetalert2";
 import { useRouter } from "next/navigation";
 import Image from "next/image";
 
@@ -44,12 +45,12 @@ export default function CharacterSelection() {
     setSelectedCharacter(characterId);
   };
 
-  const handleSave = () => {
+  const handleSave = async () => {
     if (isClient) {
       localStorage.setItem('selectedCharacter', selectedCharacter.toString());
       localStorage.setItem('selectedCharacterName', characters[selectedCharacter].name);
       localStorage.setItem('selectedCharacterImage', characters[selectedCharacter].image);
-      alert(`เลือกตัวละคร "${characters[selectedCharacter].name}" สำเร็จ!`);
+      await Swal.fire({ icon: 'success', title: `เลือกตัวละคร "${characters[selectedCharacter].name}" สำเร็จ!`, timer: 1200, showConfirmButton: false });
       router.back();
     }
   };
