@@ -288,7 +288,10 @@ export default function StudentDashboard() {
           </div>
           <h2 className="text-2xl font-bold text-white mb-2 drop-shadow-lg">ผลคะแนน</h2>
           <p className="text-pink-200 mb-4">ดูผลคะแนนการทดสอบ</p>
-          <button className="bg-gradient-to-r from-pink-500 to-purple-600 hover:from-pink-600 hover:to-purple-700 text-white font-semibold py-3 px-6 rounded-xl shadow-lg hover:shadow-xl transition-all duration-300 transform hover:scale-105 border border-white/20">
+          <button 
+            onClick={() => router.push('/StudentDashboard/scores')}
+            className="bg-gradient-to-r from-pink-500 to-purple-600 hover:from-pink-600 hover:to-purple-700 text-white font-semibold py-3 px-6 rounded-xl shadow-lg hover:shadow-xl transition-all duration-300 transform hover:scale-105 border border-white/20"
+          >
             ดูผลคะแนน
           </button>
         </div>
