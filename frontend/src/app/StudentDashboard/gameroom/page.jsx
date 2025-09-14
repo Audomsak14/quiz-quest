@@ -93,10 +93,10 @@ export default function GameRoom() {
         alert('ห้องเต็มแล้ว ไม่สามารถเข้าร่วมได้');
         return;
       }
-      // เข้าห้องสำเร็จ
-      alert(`เข้าร่วมห้อง "${room.name}" สำเร็จ!`);
+      // เข้าห้องสำเร็จ และเด้งไปหน้าเล่นเกม
       setRoomCode('');
       setShowJoinRoom(false);
+      router.push('/game');
     } else {
       alert('ไม่พบห้องที่มีรหัสนี้');
     }
@@ -226,7 +226,7 @@ export default function GameRoom() {
                     className="group relative bg-white/5 backdrop-blur-md rounded-2xl p-6 border border-white/10 hover:bg-white/10 transition-all duration-300 transform hover:scale-[1.02] shadow-xl hover:shadow-2xl cursor-pointer"
                     onClick={() => {
                       if (room.status === 'waiting' && room.players < room.maxPlayers) {
-                        alert(`เข้าร่วมห้อง "${room.name}" สำเร็จ!`);
+                        router.push('/game');
                       }
                     }}
                   >
