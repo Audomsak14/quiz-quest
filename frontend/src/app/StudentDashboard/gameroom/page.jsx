@@ -102,6 +102,17 @@ export default function GameRoom() {
     }
   };
 
+  const handleJoinByRoomCode = () => {
+    if (roomCode.trim()) {
+      // เช็คว่ารหัสห้องไม่เป็นค่าว่าง
+      setRoomCode('');
+      setShowJoinRoom(false);
+      router.push('/game');
+    } else {
+      alert('กรุณากรอกรหัสห้อง');
+    }
+  };
+
   const getStatusColor = (status) => {
     return status === 'waiting' ? 'text-green-500' : 'text-yellow-500';
   };
@@ -306,7 +317,7 @@ export default function GameRoom() {
                   value={roomCode}
                   onChange={(e) => setRoomCode(e.target.value)}
                   className="w-full p-4 bg-white/10 backdrop-blur-md border border-white/20 rounded-2xl text-white text-lg font-bold text-center uppercase placeholder-purple-300 focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all duration-300"
-                  onKeyPress={(e) => e.key === 'Enter' && handleJoinRoom()}
+                  onKeyPress={(e) => e.key === 'Enter' && handleJoinByRoomCode()}
                   autoFocus
                 />
               </div>
@@ -319,7 +330,7 @@ export default function GameRoom() {
                   ยกเลิก
                 </button>
                 <button
-                  onClick={handleJoinRoom}
+                  onClick={handleJoinByRoomCode}
                   className="flex-1 bg-gradient-to-r from-blue-500 to-cyan-500 hover:from-blue-600 hover:to-cyan-600 text-white font-bold py-4 px-6 rounded-2xl transition-all duration-300 shadow-xl hover:shadow-cyan-500/25 transform hover:scale-105"
                 >
                   เข้าร่วม
