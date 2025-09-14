@@ -271,7 +271,10 @@ export default function StudentDashboard() {
           </div>
           <h2 className="text-2xl font-bold text-white mb-2 drop-shadow-lg">แบบทดสอบ</h2>
           <p className="text-blue-200 mb-4">เข้าร่วมแบบทดสอบออนไลน์</p>
-          <button className="bg-gradient-to-r from-blue-500 to-purple-600 hover:from-blue-600 hover:to-purple-700 text-white font-semibold py-3 px-6 rounded-xl shadow-lg hover:shadow-xl transition-all duration-300 transform hover:scale-105 border border-white/20">
+          <button 
+            onClick={() => router.push('/StudentDashboard/gameroom')}
+            className="bg-gradient-to-r from-blue-500 to-purple-600 hover:from-blue-600 hover:to-purple-700 text-white font-semibold py-3 px-6 rounded-xl shadow-lg hover:shadow-xl transition-all duration-300 transform hover:scale-105 border border-white/20"
+          >
             เข้าร่วมแบบทดสอบ
           </button>
         </div>
