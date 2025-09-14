@@ -3,6 +3,7 @@ import mongoose from "mongoose";
 import cors from "cors";
 import authRoutes from "./routes/auth.js";
 import questionRoutes from "./routes/questions.js";
+import questionSetRoutes from "./routes/questionSetRoutes.js";
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -31,6 +32,7 @@ mongoose.connection.on("error", (err) => {
 // Routes
 app.use("/api/auth", authRoutes);
 app.use("/api/questions", questionRoutes);
+app.use("/api/questionsets", questionSetRoutes);
 
 // Test route
 app.get("/", (req, res) => {

@@ -25,16 +25,20 @@ function CreateNewSetContent() {
 
   const fetchQuestionSet = async () => {
     try {
-      const res = await axios.get(`http://localhost:5000/api/questionsets/${editId}`);
+  const res = await axios.get(`http://localhost:5000/api/questions/sets/${editId}`);
       setTitle(res.data.title);
-      // map กลับเป็นรูปแบบที่ใช้ในฟอร์ม
-      setQuestions(res.data.questions.map(q => ({
-        text: q.title,
-        choices: q.options,
-        correct: q.options.findIndex(opt => opt === q.answer) ?? 0
-      })));
-      setScorePerQuestion(res.data.scorePerQuestion);
-      setTimePerQuestion(res.data.timePerQuestion);
+      // map กลับเป็นรูปแบบที่ใช้ในฟอร์ม จากสคีม backend (question, options, correctAnswer, points)
+      setQuestions(
+        (res.data.questions || []).map((q) => ({
+          text: q.question,
+          choices: q.options || ["", "", "", ""],
+          correct:
+            (q.options || []).findIndex((opt) => opt === q.correctAnswer) ?? 0,
+        }))
+      );
+      // กรณี backend เก็บคะแนนต่อข้อในแต่ละคำถาม ใช้ค่าของข้อแรกเป็นค่าเริ่มต้น
+      setScorePerQuestion(res.data.questions?.[0]?.points ?? 1);
+      setTimePerQuestion(res.data.timeLimit ?? 30);
       setSelectedMap(res.data.map || "/map1.png");
     } catch (err) {
       console.error("Error fetching question set:", err);
@@ -74,36 +78,50 @@ function CreateNewSetContent() {
       return;
     }
 
-    // แปลง questions ให้ตรงกับ schema backend
-    const questionsForBackend = questions.map(q => ({
-      title: q.text,
+    // เตรียมข้อมูลให้ตรงกับ schema backend
+    const questionsForBackend = questions.map((q) => ({
+      question: q.text,
+      type: "multiple-choice",
       options: q.choices,
-      answer: q.choices[q.correct]
+      correctAnswer: q.choices[q.correct],
+      points: scorePerQuestion,
     }));
+
+    // ระบุผู้สร้างจาก localStorage ถ้ามี ไม่งั้นใช้ 'anonymous'
+    let createdBy = "anonymous";
+    try {
+      const rawUser = localStorage.getItem("user");
+      if (rawUser) {
+        const user = JSON.parse(rawUser);
+        createdBy = user?.username || user?.email || user?._id || "anonymous";
+      }
+    } catch {}
 
     setIsLoading(true);
     try {
+      const payload = {
+        title,
+        description: "",
+        questions: questionsForBackend,
+        timeLimit: timePerQuestion,
+        createdBy,
+        // ฟิลด์ที่ UI ใช้ ซึ่ง backend จะไม่รู้จัก (strict) แต่ไม่กระทบการบันทึก
+        map: selectedMap,
+      };
+
       if (editId) {
-        await axios.put(`http://localhost:5000/api/questionsets/${editId}`, {
-          title,
-          map: selectedMap,
-          questions: questionsForBackend,
-          scorePerQuestion,
-          timePerQuestion
-        });
+        await axios.put(
+          `http://localhost:5000/api/questions/sets/${editId}`,
+          payload
+        );
       } else {
-        await axios.post("http://localhost:5000/api/questionsets", {
-          title,
-          map: selectedMap,
-          questions: questionsForBackend,
-          scorePerQuestion,
-          timePerQuestion
-        });
+        await axios.post("http://localhost:5000/api/questions/sets", payload);
       }
       router.push("/TeacherDashboard");
     } catch (err) {
       console.error("Error saving question set:", err);
-      alert("เกิดข้อผิดพลาดในการบันทึกข้อมูล");
+      const backendMsg = err?.response?.data?.error || err?.response?.data?.message;
+      alert("เกิดข้อผิดพลาดในการบันทึกข้อมูล" + (backendMsg ? `: ${backendMsg}` : ""));
     } finally {
       setIsLoading(false);
     }

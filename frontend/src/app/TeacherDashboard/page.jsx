@@ -26,7 +26,7 @@ export default function TeacherDashboard() {
   const handleDelete = async (setId) => {
     if (window.confirm("คุณแน่ใจหรือไม่ที่จะลบชุดคำถามนี้?")) {
       try {
-        await axios.delete(`http://localhost:5000/api/questions/sets/${setId}`);
+  await axios.delete(`http://localhost:5000/api/questions/sets/${setId}`);
         fetchQuestionSets(); // รีเฟรชข้อมูล
       } catch (err) {
         console.error("Error deleting question set:", err);
@@ -247,8 +247,8 @@ export default function TeacherDashboard() {
             <div className="p-8">
               <div className="grid gap-6">
                 {questionSets.map((set, index) => (
-                  <div key={set._id} className="group bg-white/5 backdrop-blur-md rounded-3xl p-8 border border-white/10 hover:bg-white/10 transition-all duration-300 transform hover:scale-[1.02] shadow-xl hover:shadow-2xl">
-                    <div className="flex items-center justify-between">
+                  <div key={set._id} className="group relative bg-white/5 backdrop-blur-md rounded-3xl p-8 border border-white/10 hover:bg-white/10 transition-all duration-300 transform hover:scale-[1.02] shadow-xl hover:shadow-2xl">
+                    <div className="relative z-10 flex items-center justify-between">
                       <div className="flex items-center space-x-6">
                         <div className="relative">
                           <div className="w-20 h-20 bg-gradient-to-br from-blue-400 via-purple-500 to-pink-500 rounded-2xl flex items-center justify-center text-white font-bold text-2xl shadow-2xl">
@@ -300,7 +300,7 @@ export default function TeacherDashboard() {
                     </div>
                     
                     {/* Hover Effect Background */}
-                    <div className="absolute inset-0 rounded-3xl bg-gradient-to-r from-blue-600/5 to-purple-600/5 opacity-0 group-hover:opacity-100 transition-opacity duration-300"></div>
+                    <div className="pointer-events-none absolute inset-0 rounded-3xl bg-gradient-to-r from-blue-600/5 to-purple-600/5 opacity-0 group-hover:opacity-100 transition-opacity duration-300"></div>
                   </div>
                 ))}
               </div>
