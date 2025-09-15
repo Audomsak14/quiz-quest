@@ -1,6 +1,7 @@
 'use client'
 import { useState, useEffect, Suspense } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
+import axios from 'axios'
 
 function GameContent() {
   const router = useRouter();
@@ -12,17 +13,29 @@ function GameContent() {
   const isTeacher = role === 'teacher';
 
   useEffect(() => {
-    // Simulate game preparation
-    const timer = setTimeout(() => {
-      setGamePhase('starting');
-    }, 2000);
-
-    return () => clearTimeout(timer);
-  }, []);
+    // Poll room status to drive phase
+    let interval;
+    const fetchStatus = async () => {
+      try {
+        if (!roomId) return;
+        const res = await axios.get(`http://localhost:5000/api/rooms/${roomId}`);
+        const status = res.data?.status;
+        if (status === 'waiting') setGamePhase('waiting');
+        else if (status === 'active') setGamePhase('starting');
+        else if (status === 'ended') setGamePhase('finished');
+      } catch (e) {
+        // ignore transient errors
+      }
+    };
+    fetchStatus();
+    interval = setInterval(fetchStatus, 2000);
+    return () => clearInterval(interval);
+  }, [roomId]);
 
   const goBackToGameroom = () => {
     if (isTeacher) {
-      router.push(`/teacher-room/${roomId}`);
+      if (roomId) router.push(`/teacher-room/${roomId}`);
+      else router.push('/TeacherDashboard');
     } else {
       router.push('/StudentDashboard/gameroom');
     }

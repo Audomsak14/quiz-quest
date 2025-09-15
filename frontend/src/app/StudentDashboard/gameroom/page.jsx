@@ -3,6 +3,7 @@
 import { useState, useEffect } from 'react';
 import Swal from 'sweetalert2';
 import { useRouter } from 'next/navigation';
+import axios from 'axios';
 
 export default function GameRoom() {
   const router = useRouter();
@@ -84,31 +85,41 @@ export default function GameRoom() {
   };
 
   const handleJoinRoom = async () => {
-    const room = gameRooms.find(r => r.code === roomCode.toUpperCase());
-    if (room) {
-      if (room.status === 'playing') {
+    try {
+      const code = roomCode.trim().toUpperCase();
+      if (!code) {
+        await Swal.fire({ icon: 'warning', title: 'กรุณากรอกรหัสห้อง' });
+        return;
+      }
+      // หา room ด้วยรหัสจาก backend
+      const roomRes = await axios.get(`http://localhost:5000/api/rooms/by-code/${code}`);
+      const room = roomRes.data;
+      if (room.status !== 'waiting') {
         await Swal.fire({ icon: 'warning', title: 'ห้องกำลังเล่นอยู่', text: 'ไม่สามารถเข้าร่วมได้' });
         return;
       }
-      if (room.players >= room.maxPlayers) {
-        await Swal.fire({ icon: 'warning', title: 'ห้องเต็มแล้ว', text: 'ไม่สามารถเข้าร่วมได้' });
-        return;
-      }
-      // เข้าห้องสำเร็จ และเด้งไปหน้าเล่นเกม
+      const name = (playerName || '').trim() || 'ผู้เล่น';
+      // join ผู้เล่นเข้า room
+      await axios.post(`http://localhost:5000/api/rooms/${room._id}/join`, { name });
+      // เคลียร์ modal และไปหน้าเกม
       setRoomCode('');
       setShowJoinRoom(false);
-      router.push('/game');
-    } else {
-      await Swal.fire({ icon: 'warning', title: 'ไม่พบห้อง', text: 'ไม่พบห้องที่มีรหัสนี้' });
+      router.push(`/game?roomId=${room._id}&role=student`);
+    } catch (err) {
+      if (err.response?.status === 404) {
+        await Swal.fire({ icon: 'warning', title: 'ไม่พบห้อง', text: 'ตรวจสอบรหัสอีกครั้ง' });
+      } else if (err.response?.status === 409) {
+        await Swal.fire({ icon: 'warning', title: 'เข้าร่วมไม่ได้', text: err.response?.data?.error || 'ห้องกำลังเล่นอยู่หรือชื่อซ้ำ' });
+      } else {
+        await Swal.fire({ icon: 'error', title: 'เกิดข้อผิดพลาด', text: err.message });
+      }
     }
   };
 
   const handleJoinByRoomCode = async () => {
     if (roomCode.trim()) {
       // เช็คว่ารหัสห้องไม่เป็นค่าว่าง
-      setRoomCode('');
-      setShowJoinRoom(false);
-      router.push('/game');
+      handleJoinRoom();
     } else {
       await Swal.fire({ icon: 'warning', title: 'กรุณากรอกรหัสห้อง' });
     }
