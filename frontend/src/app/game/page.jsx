@@ -1,10 +1,15 @@
 'use client'
-import { useState, useEffect } from 'react'
-import { useRouter } from 'next/navigation'
+import { useState, useEffect, Suspense } from 'react'
+import { useRouter, useSearchParams } from 'next/navigation'
 
-export default function GamePage() {
+function GameContent() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const [gamePhase, setGamePhase] = useState('waiting'); // waiting, starting, playing, finished
+  const role = searchParams.get('role'); // 'teacher' or 'student'
+  const roomId = searchParams.get('roomId');
+  
+  const isTeacher = role === 'teacher';
 
   useEffect(() => {
     // Simulate game preparation
@@ -16,7 +21,19 @@ export default function GamePage() {
   }, []);
 
   const goBackToGameroom = () => {
-    router.push('/StudentDashboard/gameroom');
+    if (isTeacher) {
+      router.push(`/teacher-room/${roomId}`);
+    } else {
+      router.push('/StudentDashboard/gameroom');
+    }
+  };
+
+  const goBackToDashboard = () => {
+    if (isTeacher) {
+      router.push('/TeacherDashboard');
+    } else {
+      router.push('/StudentDashboard');
+    }
   };
 
   return (
@@ -41,12 +58,18 @@ export default function GamePage() {
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 19l-7-7m0 0l7-7m-7 7h18" />
               </svg>
             </div>
-            <span className="text-lg font-medium">กลับไปหาห้องเกม</span>
+            <span className="text-lg font-medium">
+              {isTeacher ? 'กลับไปจัดการห้อง' : 'กลับไปหาห้องเกม'}
+            </span>
           </button>
           
           <div className="text-right">
-            <h1 className="text-4xl font-bold text-white mb-2">🎮 Quiz Quest</h1>
-            <p className="text-purple-300 text-lg">เตรียมพร้อมสำหรับการแข่งขัน</p>
+            <h1 className="text-4xl font-bold text-white mb-2">
+              🎮 Quiz Quest {isTeacher ? '(ครู)' : ''}
+            </h1>
+            <p className="text-purple-300 text-lg">
+              {isTeacher ? 'กำลังรอผู้เล่นเข้าร่วม' : 'เตรียมพร้อมสำหรับการแข่งขัน'}
+            </p>
           </div>
         </div>
 
@@ -61,8 +84,12 @@ export default function GamePage() {
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
                   </svg>
                 </div>
-                <h2 className="text-4xl font-bold text-white mb-4">กำลังเตรียมเกม...</h2>
-                <p className="text-purple-300 text-xl">กรุณารอสักครู่ เรากำลังโหลดคำถามให้คุณ</p>
+                <h2 className="text-4xl font-bold text-white mb-4">
+                  {isTeacher ? 'กำลังรอผู้เล่น...' : 'กำลังเตรียมเกม...'}
+                </h2>
+                <p className="text-purple-300 text-xl">
+                  {isTeacher ? 'ผู้เล่นกำลังเข้าร่วมห้อง รอสักครู่' : 'กรุณารอสักครู่ เรากำลังโหลดคำถามให้คุณ'}
+                </p>
               </div>
               
               <div className="space-y-4 text-white/80">
@@ -71,7 +98,9 @@ export default function GamePage() {
                   <div className="w-3 h-3 bg-blue-500 rounded-full animate-bounce delay-100"></div>
                   <div className="w-3 h-3 bg-indigo-500 rounded-full animate-bounce delay-200"></div>
                 </div>
-                <p className="text-lg">โหลดคำถาม และเตรียมห้องแข่งขัน...</p>
+                <p className="text-lg">
+                  {isTeacher ? 'ระบบกำลังรอผู้เล่นและเตรียมเกม...' : 'โหลดคำถาม และเตรียมห้องแข่งขัน...'}
+                </p>
               </div>
             </div>
           )}
@@ -109,10 +138,10 @@ export default function GamePage() {
               <div className="mt-8">
                 <p className="text-white/80 text-lg mb-4">ฟีเจอร์เกมจะมาในเร็วๆ นี้...</p>
                 <button
-                  onClick={goBackToGameroom}
+                  onClick={isTeacher ? goBackToDashboard : goBackToGameroom}
                   className="bg-gradient-to-r from-purple-600 to-blue-600 hover:from-purple-700 hover:to-blue-700 text-white font-bold py-4 px-8 rounded-2xl transition-all duration-300 transform hover:scale-105 shadow-2xl"
                 >
-                  กลับไปหาห้องเกมอื่น
+                  {isTeacher ? 'กลับไปแดชบอร์ดครู' : 'กลับไปหาห้องเกมอื่น'}
                 </button>
               </div>
             </div>
@@ -147,5 +176,13 @@ export default function GamePage() {
         </div>
       </div>
     </div>
+  );
+}
+
+export default function GamePage() {
+  return (
+    <Suspense fallback={<div className="min-h-screen flex items-center justify-center text-white">กำลังโหลดหน้าเกม...</div>}>
+      <GameContent />
+    </Suspense>
   );
 }

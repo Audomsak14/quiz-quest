@@ -17,10 +17,63 @@ router.get("/", async (req, res) => {
 // สร้างห้องใหม่
 router.post("/", async (req, res) => {
   try {
-    const { name, description } = req.body;
-    const room = new Room({ name, description });
-    await room.save();
+    const { questionSetId, name, isActive } = req.body;
+
+    // function to generate candidate code
+    const gen = () => Math.random().toString(36).toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 6);
+
+    // try few times to avoid duplicate key
+    let room, attempts = 0;
+    while (attempts < 5) {
+      const code = gen();
+      try {
+        room = new Room({
+          name: name || "ห้องใหม่",
+          questionSetId,
+          code,
+          roomCode: code,
+          status: 'waiting',
+          isActive: isActive !== undefined ? isActive : true,
+        });
+        await room.save();
+        break; // success
+      } catch (e) {
+        // duplicate code, retry
+        if (e.code === 11000) {
+          attempts += 1;
+          continue;
+        }
+        throw e;
+      }
+    }
+
+    if (!room) {
+      return res.status(500).json({ error: 'ไม่สามารถสร้างโค้ดห้องที่ไม่ซ้ำได้' });
+    }
+
+    res.status(201).json(room);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// get one room
+router.get('/:id', async (req, res) => {
+  try {
+    const room = await Room.findById(req.params.id);
+    if (!room) return res.status(404).json({ error: 'Room not found' });
     res.json(room);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// get players of a room
+router.get('/:id/players', async (req, res) => {
+  try {
+    const room = await Room.findById(req.params.id);
+    if (!room) return res.status(404).json({ error: 'Room not found' });
+    res.json(room.players || []);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -30,10 +83,10 @@ router.post("/", async (req, res) => {
 router.put("/:id", async (req, res) => {
   try {
     const { id } = req.params;
-    const { name, description } = req.body;
+    const update = req.body;
     const room = await Room.findByIdAndUpdate(
       id,
-      { name, description },
+      update,
       { new: true }
     );
     res.json(room);

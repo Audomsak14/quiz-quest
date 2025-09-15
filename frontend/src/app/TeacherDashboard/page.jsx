@@ -50,6 +50,27 @@ export default function TeacherDashboard() {
     router.push(`/create-new-set?edit=${setId}`);
   };
 
+  const handleCreateRoom = async (setId) => {
+    try {
+      const response = await axios.post('http://localhost:5000/api/rooms', {
+        questionSetId: setId,
+        name: `ห้องสำหรับชุดคำถาม`,
+        isActive: true
+      });
+      
+      // Redirect ไปหน้าจัดการห้องของครู
+      router.push(`/teacher-room/${response.data._id}`);
+      
+    } catch (err) {
+      console.error("Error creating room:", err);
+      await Swal.fire({
+        icon: 'error',
+        title: 'สร้างห้องไม่สำเร็จ',
+        text: err.response?.data?.error || err.message
+      });
+    }
+  };
+
   const handleLogout = async () => {
     localStorage.removeItem('token');
     localStorage.removeItem('user');
@@ -295,6 +316,16 @@ export default function TeacherDashboard() {
                             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
                           </svg>
                           <span>แก้ไข</span>
+                        </button>
+                        <button
+                          onClick={() => handleCreateRoom(set._id)}
+                          className="group/btn bg-gradient-to-r from-green-500 to-emerald-500 hover:from-green-600 hover:to-emerald-600 text-white font-bold py-3 px-6 rounded-2xl transition-all duration-300 shadow-lg hover:shadow-xl transform hover:scale-105 flex items-center space-x-3"
+                        >
+                          <svg className="w-5 h-5 group-hover/btn:rotate-12 transition-transform duration-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" />
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" />
+                          </svg>
+                          <span>สร้างห้อง</span>
                         </button>
                         <button
                           onClick={() => handleDelete(set._id)}
