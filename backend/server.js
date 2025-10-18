@@ -1,13 +1,18 @@
 import express from "express";
 import mongoose from "mongoose";
 import cors from "cors";
+import { createServer } from "http";
+import { Server as SocketIOServer } from "socket.io";
 import authRoutes from "./routes/auth.js";
 import questionRoutes from "./routes/questions.js";
 import questionSetRoutes from "./routes/questionSetRoutes.js";
 import Room from "./models/Room.js";
 import roomRoutes from "./routes/rooms.js";
+import { requireAuth } from "./middleware/auth.js";
 
 const app = express();
+const httpServer = createServer(app);
+let io;
 const PORT = process.env.PORT || 5000;
 
 // Middleware
@@ -67,6 +72,574 @@ app.get("/", (req, res) => {
   res.json({ message: "Quiz Quest Backend API" });
 });
 
-app.listen(PORT, () => {
+// Game API endpoints
+// Get questions for a specific room/game
+app.get("/api/game/questions/:roomId", async (req, res) => {
+  try {
+    const { roomId } = req.params;
+    
+    // Find the room to get questionSetId
+    const room = await Room.findById(roomId).populate('questionSetId');
+    if (!room) {
+      return res.status(404).json({ error: "Room not found" });
+    }
+
+    if (!room.questionSetId) {
+      return res.status(400).json({ error: "Room has no associated question set" });
+    }
+
+    // Get questions from the question set
+    const questionSet = room.questionSetId;
+    
+    // Transform questions to game format (no hard limit)
+    const total = Array.isArray(questionSet.questions) ? questionSet.questions.length : 0;
+    // Map size used by frontend MapGameNew
+    const MAP_WIDTH = 1200;
+    const MAP_HEIGHT = 800;
+    // We'll layout in 2 columns to keep spacing clear
+    const cols = 2;
+    const rows = Math.max(1, Math.ceil(total / cols));
+    const xPositions = [200, 800]; // left/right columns
+    const topMargin = 120;
+    const bottomMargin = 80;
+    const usableHeight = Math.max(100, MAP_HEIGHT - topMargin - bottomMargin);
+    const rowGap = rows > 1 ? Math.floor(usableHeight / (rows - 1)) : 0;
+
+    const gameQuestions = questionSet.questions.map((q, index) => {
+      // Find correct answer index
+      let answerIndex = 0;
+      if (typeof q.correctAnswer === 'string') {
+        answerIndex = q.options.findIndex(option => option === q.correctAnswer);
+        if (answerIndex === -1) answerIndex = 0; // Fallback
+      } else {
+        answerIndex = q.correctAnswer;
+      }
+
+      // Position within 2-column grid that adapts to number of rows
+      const row = Math.floor(index / cols);
+      const col = index % cols;
+      const x = xPositions[col] || 200;
+      const y = topMargin + row * rowGap;
+
+      return {
+        id: `q${index + 1}`,
+        text: q.question,
+        choices: q.options,
+        answerIndex: answerIndex,
+        points: q.points || 100,
+        x,
+        y
+      };
+    });
+
+    res.json({
+      success: true,
+      roomId,
+      questionSetTitle: questionSet.title,
+      questions: gameQuestions
+    });
+
+  } catch (error) {
+    console.error("Error fetching game questions:", error);
+    res.status(500).json({ error: "Failed to fetch questions" });
+  }
+});
+
+// Get room info for game
+app.get("/api/game/room/:roomId", async (req, res) => {
+  try {
+    const { roomId } = req.params;
+    
+    const room = await Room.findById(roomId).populate('questionSetId');
+    if (!room) {
+      return res.status(404).json({ error: "Room not found" });
+    }
+
+    res.json({
+      success: true,
+      room: {
+        id: room._id,
+        name: room.name,
+        description: room.description,
+        status: room.status,
+        questionSetId: room.questionSetId?._id,
+        questionSetTitle: room.questionSetId?.title || 'Unknown'
+      }
+    });
+
+  } catch (error) {
+    console.error("Error fetching room info:", error);
+    res.status(500).json({ error: "Failed to fetch room info" });
+  }
+});
+
+// Initialize Socket.IO
+io = new SocketIOServer(httpServer, {
+  cors: {
+    origin: ["http://localhost:3000", "http://localhost:3001"],
+    credentials: true
+  }
+});
+
+// In-memory live room state (lightweight realtime layer)
+// roomsLive: roomId -> {
+//   players: Map<playerId, { name, x, y, role, socketId }>,
+//   startedAt?: number,
+//   competition?: boolean,
+//   kicked?: Map<playerId, number> // until timestamp ms when player can rejoin
+// }
+const roomsLive = new Map();
+
+// Store game completion results for rankings
+// gameResults: roomId -> [{ playerId, playerName, finalScore, completionTime, questionsAnswered, timestamp }]
+const gameResults = new Map();
+
+io.on("connection", (socket) => {
+  // join real-time room
+  socket.on("joinRoom", async ({ roomId, playerId, name, x = 50, y = 40, role = 'student' } = {}) => {
+    if (!roomId || !playerId) return;
+
+    // Ensure in-memory room exists before any DB ops so we can always respond
+    let room = roomsLive.get(roomId);
+    if (!room) {
+      room = { players: new Map(), kicked: new Map() };
+      roomsLive.set(roomId, room);
+    }
+    // Ensure kicked map exists
+    if (!room.kicked) room.kicked = new Map();
+
+    // If player was recently kicked, block join for a short period
+    try {
+      const now = Date.now();
+      // clean up expired bans
+      for (const [pid, until] of room.kicked.entries()) {
+        if (!until || until <= now) room.kicked.delete(pid);
+      }
+      const until = room.kicked.get(playerId);
+      if (until && until > now) {
+        // Inform client and do not add to players list
+        socket.emit('kicked', { roomId, reason: 'temporarily-banned' });
+        try { socket.disconnect(true); } catch {}
+        return;
+      }
+    } catch { /* noop */ }
+
+    try {
+  socket.join(roomId);
+      socket.data.roomId = roomId;
+      socket.data.playerId = playerId;
+      socket.data.role = role;
+
+  // Track player in memory immediately (dedupe by playerId)
+      // Track socket id for this player to kick old sockets if needed
+      const existing = room.players.get(playerId);
+      room.players.set(playerId, { name: name || "Player", x, y, role, socketId: socket.id });
+
+      // If there was a previous socket for same playerId in the room, notify a left event
+      // so clients can drop the old avatar (optional safety)
+      if (existing && existing.socketId && existing.socketId !== socket.id) {
+        socket.to(roomId).emit("playerLeft", { playerId });
+      }
+
+      // Enforce unique student name per room (case-insensitive, trimmed)
+      try {
+        const norm = String(name || '').trim().toLowerCase();
+        if (role === 'student' && norm) {
+          for (const [pid, info] of room.players.entries()) {
+            if (pid === playerId) continue;
+            const normOther = String(info?.name || '').trim().toLowerCase();
+            if (normOther && normOther === norm && info?.role !== 'teacher') {
+              room.players.delete(pid);
+              io.to(roomId).emit('playerLeft', { playerId: pid });
+              console.log(`♻️ Replaced existing player with same name '${name}' in room ${roomId}: removed ${pid}, kept ${playerId}`);
+              break;
+            }
+          }
+        }
+      } catch { /* no-op */ }
+
+      // Try to persist to DB and read status, but don't fail the join if DB errors
+      let roomStatus = 'waiting';
+      try {
+        await Room.findByIdAndUpdate(
+          roomId,
+          {
+            $addToSet: {
+              players: {
+                name: name || "Player",
+                playerId,
+                score: 0,
+                x,
+                y,
+                questionsAnswered: []
+              }
+            }
+          },
+          { upsert: false }
+        );
+
+        const roomDoc = await Room.findById(roomId);
+        roomStatus = roomDoc?.status || 'waiting';
+      } catch (dbErr) {
+        console.warn('joinRoom DB sync warning:', dbErr.message);
+      }
+
+      console.log(`✅ ${name || "Player"} (${role}) joined room ${roomId}`);
+
+      // send current room state to this client with status (dedupe by playerId)
+      const playersArr = Array.from(room.players.entries()).map(([id, v]) => ({ playerId: id, ...v }));
+      const uniquePlayers = Array.from(new Map(playersArr.map(p => [p.playerId, p])).values());
+      // Try to include authoritative startedAt
+      let startedAtTs = roomsLive.get(roomId)?.startedAt;
+  const competitionMode = roomsLive.get(roomId)?.competition || false;
+      if (!startedAtTs && roomStatus === 'active') {
+        // derive from DB if available
+        const startedDoc = await Room.findById(roomId).select('gameData.startedAt');
+        if (startedDoc?.gameData?.startedAt) {
+          startedAtTs = new Date(startedDoc.gameData.startedAt).getTime();
+          const r = roomsLive.get(roomId) || { players: new Map() };
+          r.startedAt = startedAtTs;
+          roomsLive.set(roomId, r);
+        }
+      }
+      socket.emit("roomState", {
+        players: uniquePlayers,
+        status: roomStatus,
+        startedAt: startedAtTs || null,
+        competition: competitionMode
+      });
+
+  // notify others (idempotent: receivers should overwrite by playerId)
+  socket.to(roomId).emit("playerJoined", { playerId, name: name || "Player", x, y, role });
+
+    } catch (error) {
+      console.error('Error in joinRoom (non-DB):', error);
+
+      // fallback - send room state without DB update
+      const safeRoom = room || { players: new Map() };
+      socket.emit("roomState", {
+        players: Array.from(safeRoom.players.entries()).map(([id, v]) => ({ playerId: id, ...v })),
+        status: 'waiting'
+      });
+    }
+  });
+
+  // movement broadcast
+  socket.on("playerMove", ({ roomId, playerId, x, y } = {}) => {
+    if (!roomId || !playerId) return;
+    const room = roomsLive.get(roomId);
+    if (room && room.players.has(playerId)) {
+      const p = room.players.get(playerId);
+      p.x = x; p.y = y;
+    }
+    socket.to(roomId).emit("playerMoved", { playerId, x, y });
+  });
+
+  // Kick a player (teacher-only action in UI; server trusts request)
+  socket.on('kickPlayer', ({ roomId, playerId } = {}) => {
+    if (!roomId || !playerId) return;
+    const room = roomsLive.get(roomId);
+    if (!room) return;
+    const info = room.players.get(playerId);
+    // Mark player as kicked for a short duration to prevent instant rejoin
+    const KICK_TTL_MS = 60 * 1000; // 1 minute temporary block
+    try {
+      if (!room.kicked) room.kicked = new Map();
+      room.kicked.set(playerId, Date.now() + KICK_TTL_MS);
+    } catch { /* noop */ }
+    if (info?.socketId) {
+      // Notify the player first and then disconnect slightly later to allow packet delivery
+      io.to(info.socketId).emit('kicked', { roomId, reason: 'kicked-by-teacher' });
+      const target = io.sockets.sockets.get(info.socketId);
+      if (target) {
+        try { setTimeout(() => { try { target.disconnect(true); } catch { /* noop */ } }, 150); } catch { /* noop */ }
+      }
+      console.log(`👢 Kicked player ${playerId} (socket ${info.socketId}) from room ${roomId}`);
+    } else if (room.players.has(playerId)) {
+      // Fallback if socket not found: remove and broadcast manually
+      room.players.delete(playerId);
+      io.to(roomId).emit('playerLeft', { playerId });
+      console.log(`👢 Kicked player ${playerId} from room ${roomId} (no socket)`);
+    }
+  });
+
+  // Teacher ends session and forces all students back to their lobby
+  socket.on('returnToLobby', async ({ roomId } = {}) => {
+    try {
+      if (!roomId) return;
+      const room = roomsLive.get(roomId);
+      if (!room) return;
+      // Broadcast to all sockets in the room (catch-all)
+      try { io.to(roomId).emit('kicked', { roomId, reason: 'return-to-lobby' }); } catch { /* noop */ }
+      for (const [pid, info] of room.players.entries()) {
+        // Skip teachers
+        if (info?.role === 'teacher') continue;
+        if (info?.socketId) {
+          try {
+            io.to(info.socketId).emit('kicked', { roomId, reason: 'return-to-lobby' });
+            const target = io.sockets.sockets.get(info.socketId);
+            if (target) setTimeout(() => { try { target.disconnect(true); } catch {} }, 100);
+          } catch { /* noop */ }
+        }
+      }
+      // Clear non-teacher players from memory
+      try {
+        for (const [pid, info] of Array.from(room.players.entries())) {
+          if (info?.role !== 'teacher') room.players.delete(pid);
+        }
+      } catch { /* noop */ }
+
+      // Reset DB room status to waiting
+      try {
+        await Room.findByIdAndUpdate(roomId, { status: 'waiting' });
+      } catch {}
+
+      console.log(`↩️  Forced return-to-lobby for all students in room ${roomId}`);
+    } catch (e) {
+      console.error('Error in returnToLobby:', e);
+    }
+  });
+
+  // Allow teacher to toggle competition mode for a room (students compete, teacher watches)
+  socket.on('setCompetition', ({ roomId, enabled } = {}) => {
+    if (!roomId) return;
+    const room = roomsLive.get(roomId) || { players: new Map() };
+    room.competition = !!enabled;
+    roomsLive.set(roomId, room);
+    io.to(roomId).emit('competitionMode', { roomId, enabled: !!enabled });
+    console.log(`🏁 Competition mode for room ${roomId} set to ${!!enabled}`);
+  });
+
+  // quiz events passthrough
+  socket.on("sendAnswer", (payload = {}) => {
+    if (!payload.roomId) return;
+    socket.to(payload.roomId).emit("answerSubmitted", payload);
+  });
+  socket.on("nextQuestion", (payload = {}) => {
+    if (!payload.roomId) return;
+    io.to(payload.roomId).emit("nextQuestion", payload);
+  });
+  socket.on("playerFinished", (payload = {}) => {
+    if (!payload.roomId) return;
+    socket.to(payload.roomId).emit("playerFinished", payload);
+  });
+
+  // Handle game completion
+  socket.on("gameCompleted", async ({ roomId, playerId, playerName, finalScore, completionTime, questionsAnswered, timestamp } = {}) => {
+    if (!roomId || !playerId) {
+      console.log("❌ gameCompleted event received but missing required data");
+      return;
+    }
+
+    try {
+  const startedAt = roomsLive.get(roomId)?.startedAt;
+  const nowTs = timestamp || Date.now();
+  const serverElapsed = typeof startedAt === 'number' ? Math.max(0, nowTs - startedAt) : completionTime;
+  console.log(`🏆 Game completed by ${playerName} in room ${roomId} - Score: ${finalScore}, Time: ${serverElapsed}ms (server)`);
+
+      // Store game result in memory
+      if (!gameResults.has(roomId)) {
+        gameResults.set(roomId, []);
+      }
+      
+      const result = {
+        playerId,
+        playerName,
+        finalScore,
+        completionTime: serverElapsed,
+        questionsAnswered,
+        timestamp: timestamp || Date.now()
+      };
+      
+      gameResults.get(roomId).push(result);
+
+      // Update database with completion data
+      await Room.findByIdAndUpdate(
+        roomId,
+        {
+          $addToSet: {
+            "gameData.completedPlayers": {
+              playerId,
+              playerName,
+              finalScore,
+              completionTime: serverElapsed,
+              questionsAnswered,
+              timestamp: new Date(result.timestamp)
+            }
+          },
+          $set: {
+            "players.$[player].score": finalScore,
+            "players.$[player].completedAt": new Date(),
+            "players.$[player].completionTime": completionTime,
+            "players.$[player].questionsAnswered": Array.from({length: questionsAnswered}, (_, i) => `q${i + 1}`)
+          }
+        },
+        {
+          arrayFilters: [{ "player.playerId": playerId }],
+          upsert: false
+        }
+      );
+
+      // Calculate and update rankings for this room
+      const roomResults = gameResults.get(roomId);
+      const rankings = roomResults
+        .slice() // Make a copy
+        .sort((a, b) => {
+          // Primary sort: Higher score wins
+          if (a.finalScore !== b.finalScore) {
+            return b.finalScore - a.finalScore;
+          }
+          // Secondary sort: Lower completion time wins (if scores are equal)
+          return a.completionTime - b.completionTime;
+        })
+        .map((result, index) => ({
+          ...result,
+          rank: index + 1
+        }));
+
+      // Broadcast the updated rankings to all players in the room
+      io.to(roomId).emit("gameResults", {
+        roomId,
+        completedPlayer: result,
+        rankings: rankings
+      });
+
+      console.log(`📊 Rankings updated for room ${roomId}:`, rankings);
+
+    } catch (error) {
+      console.error("Error handling game completion:", error);
+    }
+  });
+
+  // Start game event
+  socket.on("startGame", async ({ roomId } = {}) => {
+    if (!roomId) {
+      console.log("❌ startGame event received but no roomId provided");
+      return;
+    }
+    
+    try {
+      console.log(`🎮 Game started in room ${roomId} - broadcasting to all players`);
+
+      const startedAt = Date.now();
+
+      // Update database room status and start time
+      await Room.findByIdAndUpdate(
+        roomId,
+        {
+          status: 'active',
+          'gameData.startedAt': new Date(startedAt)
+        }
+      );
+
+      // Save to in-memory live state
+      const r = roomsLive.get(roomId) || { players: new Map() };
+      r.startedAt = startedAt;
+      roomsLive.set(roomId, r);
+
+      // Broadcast to all players in the room with server timestamp
+      io.to(roomId).emit("gameStarted", { roomId, startedAt });
+      console.log(`📡 gameStarted event broadcasted to room ${roomId} at ${startedAt}`);
+      
+    } catch (error) {
+      console.error("Error starting game:", error);
+      // Still broadcast even if DB update fails
+      const fallback = Date.now();
+      const rr = roomsLive.get(roomId) || { players: new Map() };
+      rr.startedAt = rr.startedAt || fallback;
+      roomsLive.set(roomId, rr);
+      io.to(roomId).emit("gameStarted", { roomId, startedAt: rr.startedAt });
+    }
+  });
+
+  socket.on("disconnect", () => {
+    const { roomId, playerId } = socket.data || {};
+    if (roomId && playerId) {
+      const room = roomsLive.get(roomId);
+      if (room) {
+        const info = room.players.get(playerId);
+        room.players.delete(playerId);
+        socket.to(roomId).emit("playerLeft", { playerId });
+        // If teacher leaves this room, force all students back to lobby as a safety net
+        if (info?.role === 'teacher') {
+          try { io.to(roomId).emit('kicked', { roomId, reason: 'teacher-left' }); } catch {}
+          try {
+            for (const [pid, pinfo] of Array.from(room.players.entries())) {
+              if (pinfo?.role !== 'teacher') {
+                if (pinfo?.socketId) {
+                  const target = io.sockets.sockets.get(pinfo.socketId);
+                  if (target) setTimeout(() => { try { target.disconnect(true); } catch {} }, 100);
+                }
+                room.players.delete(pid);
+              }
+            }
+          } catch {}
+          // reset DB status to waiting
+          try { Room.findByIdAndUpdate(roomId, { status: 'waiting' }).catch(() => {}); } catch {}
+          console.log(`↩️  Teacher left; forced all students in room ${roomId} back to lobby`);
+        }
+        if (room.players.size === 0) roomsLive.delete(roomId);
+      }
+    }
+  });
+});
+
+// HTTP endpoint: Kick all students in a room (force disconnect + set room to waiting)
+app.post('/api/rooms/:roomId/kick-all', requireAuth, async (req, res) => {
+  try {
+    const { roomId } = req.params;
+    if (!roomId) return res.status(400).json({ error: 'Missing roomId' });
+
+    // Only owner can kick-all in this room
+    const roomDoc = await Room.findById(roomId);
+    if (!roomDoc) return res.status(404).json({ error: 'Room not found' });
+    if (String(roomDoc.ownerId || '') !== String(req.user.id || '')) {
+      return res.status(403).json({ error: 'Forbidden' });
+    }
+
+    // Broadcast kick event to everyone in the room first
+    try { io.to(roomId).emit('kicked', { roomId, reason: 'kick-all' }); } catch {}
+
+    // Disconnect all non-teacher sockets currently in this room
+    let kickedCount = 0;
+    try {
+      const sockets = await io.in(roomId).fetchSockets();
+      for (const s of sockets) {
+        const role = s?.data?.role || 'student';
+        if (role !== 'teacher') {
+          kickedCount += 1;
+          // slight delay to allow kicked event to flush
+          setTimeout(() => { try { s.disconnect(true); } catch {} }, 100);
+        }
+      }
+    } catch {}
+
+    // Clear in-memory students and apply a short rejoin ban
+    try {
+      const r = roomsLive.get(roomId);
+      if (r) {
+        if (!r.kicked) r.kicked = new Map();
+        const until = Date.now() + 60 * 1000; // 1 minute temporary block
+        for (const [pid, info] of Array.from(r.players.entries())) {
+          if (info?.role !== 'teacher') {
+            r.players.delete(pid);
+            r.kicked.set(pid, until);
+          }
+        }
+      }
+    } catch {}
+
+    // Reset room status in DB to 'waiting'
+    try { await Room.findByIdAndUpdate(roomId, { status: 'waiting' }); } catch {}
+
+    console.log(`👢 Kick-all executed for room ${roomId} (kicked ${kickedCount} sockets)`);
+    return res.json({ ok: true, kicked: kickedCount });
+  } catch (e) {
+    console.error('kick-all error:', e);
+    return res.status(500).json({ error: 'Failed to kick all' });
+  }
+});
+
+httpServer.listen(PORT, () => {
   console.log(`🚀 Server running on http://localhost:${PORT}`);
 });

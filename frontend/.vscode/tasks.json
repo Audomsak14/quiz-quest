@@ -1,0 +1,24 @@
+{
+	"version": "2.0.0",
+	"tasks": [
+		{
+			"label": "Rebuild Frontend",
+			"type": "shell",
+			"command": "npm run build",
+			"args": [],
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "build"
+		},
+		{
+			"label": "Next dev typecheck (one-off)",
+			"type": "shell",
+			"command": "node -v > NUL 2>&1 && (if exist node_modules (echo deps ok) else (npm ci)) && (if exist node_modules\\.bin\\next (node node_modules/.bin/next telemetry disable > NUL 2>&1) else (echo next missing)) && node -e \"console.log('syntax check ok')\"",
+			"args": [],
+			"problemMatcher": [
+				"$eslint-stylish"
+			],
+			"group": "build"
+		}
+	]
+}

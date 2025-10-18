@@ -3,6 +3,7 @@ import { useState, useEffect } from "react";
 import Swal from "sweetalert2";
 import { useRouter } from "next/navigation";
 import Image from "next/image";
+import { profileStorage } from "@/lib/profileStorage";
 
 export default function CharacterSelection() {
   const router = useRouter();
@@ -11,7 +12,7 @@ export default function CharacterSelection() {
 
   useEffect(() => {
     setIsClient(true);
-    const saved = localStorage.getItem("selectedCharacter");
+    const saved = profileStorage.getCharacterId() || localStorage.getItem("selectedCharacter");
     if (saved) {
       setSelectedCharacter(parseInt(saved));
     }
@@ -47,7 +48,7 @@ export default function CharacterSelection() {
 
   const handleSave = async () => {
     if (isClient) {
-      localStorage.setItem('selectedCharacter', selectedCharacter.toString());
+      profileStorage.setCharacterId(selectedCharacter.toString());
       localStorage.setItem('selectedCharacterName', characters[selectedCharacter].name);
       localStorage.setItem('selectedCharacterImage', characters[selectedCharacter].image);
       await Swal.fire({ icon: 'success', title: `เลือกตัวละคร "${characters[selectedCharacter].name}" สำเร็จ!`, timer: 1200, showConfirmButton: false });

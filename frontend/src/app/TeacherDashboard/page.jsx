@@ -3,6 +3,7 @@ import { useState, useEffect } from "react";
 import Swal from "sweetalert2";
 import { useRouter } from "next/navigation";
 import axios from "axios";
+import { withAuth } from "../../lib/auth";
 
 export default function TeacherDashboard() {
   const router = useRouter();
@@ -15,7 +16,7 @@ export default function TeacherDashboard() {
 
   const fetchQuestionSets = async () => {
     try {
-      const response = await axios.get("http://localhost:5000/api/questions/sets");
+  const response = await axios.get("http://localhost:5000/api/questions/sets", withAuth());
       setQuestionSets(response.data);
     } catch (err) {
       console.error("Error fetching question sets:", err);
@@ -36,7 +37,7 @@ export default function TeacherDashboard() {
     });
     if (res.isConfirmed) {
       try {
-        await axios.delete(`http://localhost:5000/api/questions/sets/${setId}`);
+  await axios.delete(`http://localhost:5000/api/questions/sets/${setId}`, withAuth());
         await Swal.fire({ icon: "success", title: "ลบสำเร็จ", timer: 1200, showConfirmButton: false });
         fetchQuestionSets(); // รีเฟรชข้อมูล
       } catch (err) {
@@ -56,7 +57,7 @@ export default function TeacherDashboard() {
         questionSetId: setId,
         name: `ห้องสำหรับชุดคำถาม`,
         isActive: true
-      });
+      }, withAuth());
       
       // Redirect ไปหน้าจัดการห้องของครู
       router.push(`/teacher-room/${response.data._id}`);

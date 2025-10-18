@@ -1,13 +1,14 @@
 import express from "express";
 import QuestionSet from "../models/QuestionSet.js";
+import { requireAuth } from "../middleware/auth.js";
 
 const router = express.Router();
 
 // GET all question sets
-router.get("/sets", async (req, res) => {
+router.get("/sets", requireAuth, async (req, res) => {
   try {
     console.log("📋 Fetching all question sets");
-    const sets = await QuestionSet.find();
+  const sets = await QuestionSet.find({ createdBy: req.user.id });
     console.log(`✅ Found ${sets.length} question sets`);
     res.json(sets);
   } catch (err) {
@@ -17,10 +18,10 @@ router.get("/sets", async (req, res) => {
 });
 
 // GET one question set
-router.get("/sets/:id", async (req, res) => {
+router.get("/sets/:id", requireAuth, async (req, res) => {
   try {
     console.log("🔍 Fetching question set:", req.params.id);
-    const set = await QuestionSet.findById(req.params.id);
+  const set = await QuestionSet.findOne({ _id: req.params.id, createdBy: req.user.id });
     if (!set) {
       return res.status(404).json({ error: "Question set not found" });
     }
@@ -32,10 +33,10 @@ router.get("/sets/:id", async (req, res) => {
 });
 
 // CREATE question set
-router.post("/sets", async (req, res) => {
+router.post("/sets", requireAuth, async (req, res) => {
   try {
     console.log("📝 Creating new question set:", req.body.title);
-    const newSet = new QuestionSet(req.body);
+  const newSet = new QuestionSet({ ...req.body, createdBy: req.user.id });
     const savedSet = await newSet.save();
     console.log("✅ Question set created:", savedSet._id);
     res.status(201).json(savedSet);
@@ -46,11 +47,11 @@ router.post("/sets", async (req, res) => {
 });
 
 // UPDATE question set
-router.put("/sets/:id", async (req, res) => {
+router.put("/sets/:id", requireAuth, async (req, res) => {
   try {
     console.log("✏️ Updating question set:", req.params.id);
-    const updatedSet = await QuestionSet.findByIdAndUpdate(
-      req.params.id, 
+  const updatedSet = await QuestionSet.findOneAndUpdate(
+    { _id: req.params.id, createdBy: req.user.id }, 
       req.body, 
       { new: true }
     );
@@ -66,10 +67,10 @@ router.put("/sets/:id", async (req, res) => {
 });
 
 // DELETE question set
-router.delete("/sets/:id", async (req, res) => {
+router.delete("/sets/:id", requireAuth, async (req, res) => {
   try {
     console.log("🗑️ Deleting question set:", req.params.id);
-    const deletedSet = await QuestionSet.findByIdAndDelete(req.params.id);
+  const deletedSet = await QuestionSet.findOneAndDelete({ _id: req.params.id, createdBy: req.user.id });
     if (!deletedSet) {
       return res.status(404).json({ error: "Question set not found" });
     }

@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react';
 import Swal from 'sweetalert2';
 import { useRouter } from 'next/navigation';
 import axios from 'axios';
+import { profileStorage } from '@/lib/profileStorage';
 
 export default function GameRoom() {
   const router = useRouter();
@@ -14,42 +15,36 @@ export default function GameRoom() {
   const [playerAvatar, setPlayerAvatar] = useState('');
   const [tempPlayerName, setTempPlayerName] = useState('');
   const [tempPlayerAvatar, setTempPlayerAvatar] = useState('');
-  const [gameRooms, setGameRooms] = useState([
-    {
-      id: 1,
-      name: 'ห้องทดสอบ 1',
-      code: 'ABC123',
-      players: 3,
-      maxPlayers: 8,
-      status: 'waiting'
-    },
-    {
-      id: 2,
-      name: 'Quiz มันส์ๆ',
-      code: 'XYZ789',
-      players: 5,
-      maxPlayers: 10,
-      status: 'playing'
-    },
-    {
-      id: 3,
-      name: 'ห้องเพื่อนๆ',
-      code: 'DEF456',
-      players: 2,
-      maxPlayers: 6,
-      status: 'waiting'
-    }
-  ]);
+  // ไม่ดึงรายการห้องแบบสาธารณะเพื่อความเป็นส่วนตัวของแต่ละบัญชี
+  // นักเรียนเข้าร่วมด้วยรหัสเท่านั้น
+  const [gameRooms, setGameRooms] = useState([]);
 
   useEffect(() => {
-    // โหลดข้อมูลผู้เล่นจาก localStorage
-    const savedName = localStorage.getItem('playerName');
-    const savedAvatar = localStorage.getItem('selectedCharacter');
-    const savedImage = localStorage.getItem('playerImage');
-    
+    // โหลดข้อมูลผู้เล่นจาก sessionStorage (กันชื่อไหลข้ามบัญชี/แท็บ)
+    const savedName = profileStorage.getName();
+    const savedAvatarEmoji = profileStorage.getCharacterId();
+    const savedImage = profileStorage.getImage();
+
     if (savedName) setPlayerName(savedName);
-    if (savedAvatar) setPlayerAvatar(savedAvatar);
     if (savedImage) setPlayerAvatar(savedImage);
+    else if (savedAvatarEmoji) setPlayerAvatar(savedAvatarEmoji);
+
+    // สร้างห้องตัวอย่างแบบแยกต่อแท็บ (ไม่ชนกับบัญชีอื่น)
+    try {
+      const cached = typeof window !== 'undefined' ? sessionStorage.getItem('demoRooms') : null;
+      if (cached) {
+        setGameRooms(JSON.parse(cached));
+      } else {
+        const randomCode = () => Array.from({ length: 6 }, () => 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'[Math.floor(Math.random()*32)]).join('');
+        const rooms = [
+          { id: randomCode(), name: 'ห้องทดสอบ 1', code: randomCode(), status: 'waiting', players: Math.floor(Math.random()*4)+1, maxPlayers: 8 },
+          { id: randomCode(), name: 'Quiz มันส์ๆ', code: randomCode(), status: 'waiting', players: Math.floor(Math.random()*4)+1, maxPlayers: 10 },
+          { id: randomCode(), name: 'ทดลองเล่น', code: randomCode(), status: 'waiting', players: Math.floor(Math.random()*3)+1, maxPlayers: 6 },
+        ];
+        sessionStorage.setItem('demoRooms', JSON.stringify(rooms));
+        setGameRooms(rooms);
+      }
+    } catch {}
   }, []);
 
   const handleImageUpload = (e) => {
@@ -66,12 +61,12 @@ export default function GameRoom() {
   const handleSaveProfile = () => {
     if (tempPlayerName.trim()) {
       setPlayerName(tempPlayerName);
-      localStorage.setItem('playerName', tempPlayerName);
+      profileStorage.setName(tempPlayerName);
     }
     if (tempPlayerAvatar) {
       setPlayerAvatar(tempPlayerAvatar);
-      localStorage.setItem('playerImage', tempPlayerAvatar);
-      localStorage.setItem('selectedCharacter', ''); // Clear emoji character
+      profileStorage.setImage(tempPlayerAvatar);
+      profileStorage.setCharacterId(''); // Clear emoji character
     }
     setShowEditProfile(false);
     setTempPlayerName('');
@@ -101,10 +96,10 @@ export default function GameRoom() {
       const name = (playerName || '').trim() || 'ผู้เล่น';
       // join ผู้เล่นเข้า room
       await axios.post(`http://localhost:5000/api/rooms/${room._id}/join`, { name });
-      // เคลียร์ modal และไปหน้าเกม
+      // เคลียร์ modal และไปหน้า lobby รอเริ่มเกม
       setRoomCode('');
       setShowJoinRoom(false);
-      router.push(`/game?roomId=${room._id}&role=student`);
+      router.push(`/lobby?roomId=${room._id}&playerName=${encodeURIComponent(name)}`);
     } catch (err) {
       if (err.response?.status === 404) {
         await Swal.fire({ icon: 'warning', title: 'ไม่พบห้อง', text: 'ตรวจสอบรหัสอีกครั้ง' });
@@ -249,7 +244,9 @@ export default function GameRoom() {
                     className="group relative bg-white/5 backdrop-blur-md rounded-2xl p-6 border border-white/10 hover:bg-white/10 transition-all duration-300 transform hover:scale-[1.02] shadow-xl hover:shadow-2xl cursor-pointer"
                     onClick={() => {
                       if (room.status === 'waiting' && room.players < room.maxPlayers) {
-                        router.push('/game');
+                        const name = (playerName || '').trim() || 'ผู้เล่น';
+                        // โหมดตัวอย่าง: เพิ่ม demo=1 เพื่อให้ Lobby ไม่เชื่อมต่อเซิร์ฟเวอร์
+                        router.push(`/lobby?roomId=${room.code}&playerName=${encodeURIComponent(name)}&demo=1`);
                       }
                     }}
                   >

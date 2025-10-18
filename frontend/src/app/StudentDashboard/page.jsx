@@ -2,6 +2,7 @@
 import { useState, useEffect } from "react";
 import Swal from "sweetalert2";
 import { useRouter } from "next/navigation";
+import { profileStorage } from "@/lib/profileStorage";
 
 export default function StudentDashboard() {
   const router = useRouter();
@@ -17,11 +18,11 @@ export default function StudentDashboard() {
   // ฟังก์ชันโหลดข้อมูลตัวละคร
   const loadCharacterData = () => {
     if (typeof window !== 'undefined') {
-      const characterName = localStorage.getItem('selectedCharacterName');
-      const characterId = localStorage.getItem('selectedCharacter');
-      const savedPlayerName = localStorage.getItem('playerName');
-      const savedCharacterImage = localStorage.getItem('selectedCharacterImage');
-      const savedPlayerImage = localStorage.getItem('playerImage');
+  const characterName = localStorage.getItem('selectedCharacterName');
+  const characterId = profileStorage.getCharacterId() || localStorage.getItem('selectedCharacter');
+  const savedPlayerName = profileStorage.getName();
+  const savedCharacterImage = localStorage.getItem('selectedCharacterImage');
+  const savedPlayerImage = profileStorage.getImage();
       
       console.log("Loading character data:", { characterName, characterId, savedPlayerName, savedCharacterImage, savedPlayerImage });
       
@@ -129,6 +130,13 @@ export default function StudentDashboard() {
 
   const handleLogout = async () => {
     if (typeof window !== 'undefined') {
+      try {
+        // Clear session-scoped auth to avoid cross-account bleed
+        sessionStorage.removeItem('token');
+        sessionStorage.removeItem('role');
+        sessionStorage.removeItem('userId');
+        sessionStorage.removeItem('username');
+      } catch {}
       localStorage.removeItem('token');
       localStorage.removeItem('user');
       localStorage.removeItem('selectedCharacter');
@@ -168,11 +176,11 @@ export default function StudentDashboard() {
   const handleSaveProfile = () => {
     if (tempPlayerName.trim()) {
       setPlayerName(tempPlayerName);
-      localStorage.setItem('playerName', tempPlayerName);
+      profileStorage.setName(tempPlayerName);
     }
     if (tempPlayerImage && tempPlayerImage !== characterImage) {
       setCharacterImage(tempPlayerImage);
-      localStorage.setItem('playerImage', tempPlayerImage);
+      profileStorage.setImage(tempPlayerImage);
       localStorage.setItem('selectedCharacterImage', tempPlayerImage);
     }
     setShowEditProfile(false);
@@ -257,7 +265,7 @@ export default function StudentDashboard() {
         <p className="text-sm">
           Debug: Player = {playerName} | Character = {selectedCharacterName} ({selectedCharacterEmoji}) | 
           Image: {characterImage ? 'Custom' : 'Default'} | 
-          localStorage: {typeof window !== 'undefined' ? localStorage.getItem('playerName') || 'none' : 'not available'}
+          local/session: {typeof window !== 'undefined' ? (sessionStorage.getItem('playerName') || localStorage.getItem('playerName') || 'none') : 'not available'}
         </p>
       </div>
 

@@ -43,12 +43,29 @@ export default function Login() {
       
       console.log("✅ Login response:", res.data);
       
-      // ล้าง localStorage เก่าก่อน
-      localStorage.clear();
-      
-      // เก็บข้อมูลใหม่ใน localStorage
+      // ล้าง storage เก่าก่อน (ระวังอย่าลบ character/player UI ที่ไม่เกี่ยวกับบัญชี)
+      try { sessionStorage.clear(); } catch {}
+      try {
+        const preserveKeys = [
+          'selectedCharacter','selectedCharacterName','selectedCharacterImage','playerName','playerImage','customCharacterImages'
+        ];
+        const preserved = {};
+        for (const k of preserveKeys) preserved[k] = localStorage.getItem(k);
+        localStorage.clear();
+        for (const [k,v] of Object.entries(preserved)) if (v !== null) localStorage.setItem(k, v);
+      } catch {}
+
+      // เก็บ token และข้อมูลผู้ใช้ (sessionStorage เป็นหลัก เพื่อแยกแต่ละแท็บ/บัญชี)
+      try {
+        sessionStorage.setItem("token", res.data.token);
+        sessionStorage.setItem("role", res.data.user.role);
+        sessionStorage.setItem("userId", res.data.user.id);
+        sessionStorage.setItem("username", res.data.user.username);
+      } catch {}
+      // ซ้ำใน localStorage เพื่อความเข้ากันได้ย้อนหลัง (frontend ส่วนอื่นอ่านจาก localStorage)
       localStorage.setItem("token", res.data.token);
       localStorage.setItem("role", res.data.user.role);
+      localStorage.setItem("userId", res.data.user.id);
       localStorage.setItem("username", res.data.user.username);
       
       console.log("💾 Stored in localStorage:", {

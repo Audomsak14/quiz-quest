@@ -1,6 +1,7 @@
 'use client'
 import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
+import { profileStorage } from '@/lib/profileStorage'
 
 export default function ScoresPage() {
   const router = useRouter();
@@ -63,12 +64,10 @@ export default function ScoresPage() {
   });
 
   useEffect(() => {
-    // โหลดชื่อผู้เล่นจาก localStorage
+    // โหลดชื่อผู้เล่นแบบ sessionStorage-first เพื่อไม่ให้ชื่อไหลข้ามบัญชี/แท็บ
     if (typeof window !== 'undefined') {
-      const savedPlayerName = localStorage.getItem('playerName');
-      if (savedPlayerName) {
-        setPlayerName(savedPlayerName);
-      }
+      const savedPlayerName = profileStorage.getName();
+      if (savedPlayerName) setPlayerName(savedPlayerName);
     }
   }, []);
 

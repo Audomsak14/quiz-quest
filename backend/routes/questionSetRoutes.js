@@ -1,12 +1,13 @@
 import express from "express";
 import QuestionSet from "../models/QuestionSet.js";
+import { requireAuth } from "../middleware/auth.js";
 
 const router = express.Router();
 
 // GET all question sets
-router.get("/", async (req, res) => {
+router.get("/", requireAuth, async (req, res) => {
   try {
-    const sets = await QuestionSet.find();
+    const sets = await QuestionSet.find({ createdBy: req.user.id });
     res.json(sets);
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -14,9 +15,9 @@ router.get("/", async (req, res) => {
 });
 
 // GET one question set
-router.get("/:id", async (req, res) => {
+router.get("/:id", requireAuth, async (req, res) => {
   try {
-    const set = await QuestionSet.findById(req.params.id);
+    const set = await QuestionSet.findOne({ _id: req.params.id, createdBy: req.user.id });
     if (!set) return res.status(404).json({ error: "Not found" });
     res.json(set);
   } catch (err) {
@@ -25,9 +26,10 @@ router.get("/:id", async (req, res) => {
 });
 
 // CREATE question set
-router.post("/", async (req, res) => {
+router.post("/", requireAuth, async (req, res) => {
   try {
-    const newSet = new QuestionSet(req.body);
+    const body = { ...req.body, createdBy: req.user.id };
+    const newSet = new QuestionSet(body);
     await newSet.save();
     res.json(newSet);
   } catch (err) {
@@ -36,9 +38,9 @@ router.post("/", async (req, res) => {
 });
 
 // UPDATE question set
-router.put("/:id", async (req, res) => {
+router.put("/:id", requireAuth, async (req, res) => {
   try {
-    const updated = await QuestionSet.findByIdAndUpdate(req.params.id, req.body, { new: true });
+    const updated = await QuestionSet.findOneAndUpdate({ _id: req.params.id, createdBy: req.user.id }, req.body, { new: true });
     res.json(updated);
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -46,9 +48,9 @@ router.put("/:id", async (req, res) => {
 });
 
 // DELETE question set
-router.delete("/:id", async (req, res) => {
+router.delete("/:id", requireAuth, async (req, res) => {
   try {
-    await QuestionSet.findByIdAndDelete(req.params.id);
+    await QuestionSet.findOneAndDelete({ _id: req.params.id, createdBy: req.user.id });
     res.json({ message: "ลบสำเร็จ" });
   } catch (err) {
     res.status(500).json({ error: err.message });

@@ -1,8 +1,10 @@
 "use client";
 import { Suspense, useState, useEffect } from "react";
+import dynamic from 'next/dynamic';
 import Swal from "sweetalert2";
 import { useRouter, useSearchParams } from "next/navigation";
 import axios from "axios";
+import { withAuth } from "../../lib/auth";
 import { FiSave, FiX, FiPlus } from "react-icons/fi";
 
 function CreateNewSetContent() {
@@ -26,7 +28,7 @@ function CreateNewSetContent() {
 
   const fetchQuestionSet = async () => {
     try {
-  const res = await axios.get(`http://localhost:5000/api/questions/sets/${editId}`);
+  const res = await axios.get(`http://localhost:5000/api/questions/sets/${editId}`, withAuth());
       setTitle(res.data.title);
       // map กลับเป็นรูปแบบที่ใช้ในฟอร์ม จากสคีม backend (question, options, correctAnswer, points)
       setQuestions(
@@ -113,11 +115,12 @@ function CreateNewSetContent() {
       if (editId) {
         await axios.put(
           `http://localhost:5000/api/questions/sets/${editId}`,
-          payload
+          payload,
+          withAuth()
         );
         await Swal.fire({ icon: 'success', title: 'อัปเดตชุดคำถามสำเร็จ', timer: 1200, showConfirmButton: false });
       } else {
-        await axios.post("http://localhost:5000/api/questions/sets", payload);
+  await axios.post("http://localhost:5000/api/questions/sets", payload, withAuth());
         await Swal.fire({ icon: 'success', title: 'บันทึกชุดคำถามสำเร็จ', timer: 1200, showConfirmButton: false });
       }
       router.push("/TeacherDashboard");
@@ -436,10 +439,13 @@ function CreateNewSetContent() {
   );
 }
 
+// Disable SSR for this page to prevent hydration mismatch caused by
+// client-only attributes injected by some browser extensions (e.g., fdprocessedid)
+const NoSSRCreateNewSetContent = dynamic(() => Promise.resolve(CreateNewSetContent), {
+  ssr: false,
+  loading: () => <div className="min-h-screen flex items-center justify-center text-white">Loading...</div>
+});
+
 export default function CreateNewSet() {
-  return (
-    <Suspense fallback={<div className="min-h-screen flex items-center justify-center text-white">Loading...</div>}>
-      <CreateNewSetContent />
-    </Suspense>
-  );
+  return <NoSSRCreateNewSetContent />;
 }

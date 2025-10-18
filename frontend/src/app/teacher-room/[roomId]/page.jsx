@@ -3,6 +3,7 @@ import { useState, useEffect } from "react";
 import { useRouter, useParams } from "next/navigation";
 import axios from "axios";
 import Swal from "sweetalert2";
+import { withAuth } from "../../../lib/auth";
 
 export default function TeacherRoomPage() {
   const router = useRouter();
@@ -25,12 +26,21 @@ export default function TeacherRoomPage() {
   const fetchRoomData = async () => {
     try {
       const [roomResponse, playersResponse] = await Promise.all([
-        axios.get(`http://localhost:5000/api/rooms/${roomId}`),
-        axios.get(`http://localhost:5000/api/rooms/${roomId}/players`)
+        axios.get(`http://localhost:5000/api/rooms/${roomId}`, withAuth()),
+        axios.get(`http://localhost:5000/api/rooms/${roomId}/players`, withAuth())
       ]);
       
       setRoom(roomResponse.data);
-      setPlayers(playersResponse.data || []);
+      const raw = Array.isArray(playersResponse.data) ? playersResponse.data : [];
+      // Deduplicate by name (trimmed, case-insensitive) so each name shows once
+      const seen = new Set();
+      const unique = [];
+      for (const p of raw) {
+        const key = String(p?.name || '').trim().toLowerCase();
+        if (!key) continue;
+        if (!seen.has(key)) { seen.add(key); unique.push(p); }
+      }
+      setPlayers(unique);
     } catch (err) {
       console.error("Error fetching room data:", err);
       if (err.response?.status === 404) {
@@ -51,7 +61,7 @@ export default function TeacherRoomPage() {
       // อัพเดทสถานะห้องเป็น "active"
       await axios.put(`http://localhost:5000/api/rooms/${roomId}`, {
         status: 'active'
-      });
+      }, withAuth());
       
       await Swal.fire({
         icon: 'success',
@@ -74,8 +84,79 @@ export default function TeacherRoomPage() {
     }
   };
 
-  const handleBackToDashboard = () => {
+  const handleBackToDashboard = async () => {
+    // On back: force-eject everyone first
+    try {
+      await axios.post(`http://localhost:5000/api/rooms/${roomId}/kick-all`, {}, withAuth());
+    } catch (e) {
+      // Fallback: set room status to waiting so student polling forces redirect
+      try { await axios.put(`http://localhost:5000/api/rooms/${roomId}`, { status: 'waiting' }, withAuth()); } catch {}
+    }
+    // Small delay to let events/DB propagate
+    await new Promise(r => setTimeout(r, 150));
     router.push('/TeacherDashboard');
+  };
+
+  // Copy room code to clipboard from header tab
+  const handleCopyCode = async () => {
+    const code = room?.code;
+    if (!code) return;
+    try {
+      if (navigator?.clipboard?.writeText) {
+        await navigator.clipboard.writeText(code);
+      } else {
+        // Fallback for older browsers
+        const el = document.createElement('textarea');
+        el.value = code;
+        document.body.appendChild(el);
+        el.select();
+        document.execCommand('copy');
+        document.body.removeChild(el);
+      }
+      await Swal.fire({
+        icon: 'success',
+        title: 'คัดลอกรหัสห้องแล้ว',
+        text: code,
+        timer: 1200,
+        showConfirmButton: false
+      });
+    } catch (e) {
+      await Swal.fire({
+        icon: 'error',
+        title: 'คัดลอกไม่สำเร็จ',
+        text: `ลองคัดลอกเอง: ${code}`,
+      });
+    }
+  };
+
+  // Kick all students out of the game room and reset it to waiting
+  const handleKickAll = async () => {
+    if (!roomId) return;
+    const confirm = await Swal.fire({
+      icon: 'warning',
+      title: 'เตะนักเรียนทั้งหมดออกจากห้อง?',
+      text: 'นักเรียนทุกคนจะถูกเด้งออกจากเกมและกลับไปหน้าห้อง รวมถึงบล็อคเข้าซ้ำชั่วคราว 1 นาที',
+      showCancelButton: true,
+      confirmButtonText: 'ยืนยัน',
+      cancelButtonText: 'ยกเลิก'
+    });
+    if (!confirm.isConfirmed) return;
+    try {
+      // Try dedicated endpoint first (if server already updated)
+      const res = await axios.post(`http://localhost:5000/api/rooms/${roomId}/kick-all`);
+      await Swal.fire({ icon: 'success', title: 'ดำเนินการแล้ว', text: `เตะออกสำเร็จ ${res.data?.kicked ?? 0} คน` });
+    } catch (e) {
+      // Fallback: force room status to waiting; student clients poll and will auto-leave
+      try {
+        await axios.put(`http://localhost:5000/api/rooms/${roomId}`, { status: 'waiting' });
+        await Swal.fire({ icon: 'success', title: 'รีเซ็ตห้องเรียบร้อย', text: 'นักเรียนจะถูกเด้งออกภายในไม่กี่วินาที' });
+      } catch (inner) {
+        console.error('kick-all fallback failed', inner);
+        await Swal.fire({ icon: 'error', title: 'ไม่สำเร็จ', text: inner.response?.data?.error || inner.message });
+      }
+    }
+    // Refresh room data to reflect status
+    await fetchRoomData();
   };
 
   if (isLoading) {
@@ -126,7 +207,19 @@ export default function TeacherRoomPage() {
                 <p className="text-green-200 text-lg">จัดการห้องและเริ่มเกม</p>
               </div>
             </div>
-              <div className="flex items-center gap-3">
+              <div className="flex items-center gap-3 flex-wrap justify-end">
+                {room?.code && (
+                  <button
+                    onClick={handleCopyCode}
+                    className="bg-gradient-to-r from-violet-500 to-fuchsia-600 hover:from-violet-600 hover:to-fuchsia-700 text-white font-bold py-3 px-5 rounded-2xl transition-all duration-300 shadow-lg hover:shadow-xl transform hover:scale-105 flex items-center space-x-2"
+                    title="คลิกเพื่อคัดลอก"
+                  >
+                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2M8 16h8a2 2 0 002-2v-2m-10 6l-4 4m0 0l4-4m-4 4V8" />
+                    </svg>
+                    <span className="whitespace-nowrap">รหัสห้อง: <span className="font-mono">{room.code}</span></span>
+                  </button>
+                )}
                 <button
                   onClick={handleBackToDashboard}
                   className="bg-gradient-to-r from-gray-500 to-gray-600 hover:from-gray-600 hover:to-gray-700 text-white font-bold py-3 px-6 rounded-2xl transition-all duration-300 shadow-lg hover:shadow-xl transform hover:scale-105 flex items-center space-x-3"

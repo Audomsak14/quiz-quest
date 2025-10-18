@@ -1,6 +1,7 @@
 // backend/routes/rooms.js
 import express from "express";
 import Room from "../models/Room.js";
+import { requireAuth, authOptional } from "../middleware/auth.js";
 
 const router = express.Router();
 
@@ -18,9 +19,9 @@ router.get("/by-code/:code", async (req, res) => {
 });
 
 // ดึงห้องทั้งหมด
-router.get("/", async (req, res) => {
+router.get("/", requireAuth, async (req, res) => {
   try {
-    const rooms = await Room.find();
+    const rooms = await Room.find({ ownerId: req.user.id });
     res.json(rooms);
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -28,7 +29,7 @@ router.get("/", async (req, res) => {
 });
 
 // สร้างห้องใหม่
-router.post("/", async (req, res) => {
+router.post("/", requireAuth, async (req, res) => {
   try {
     const { questionSetId, name, isActive } = req.body;
 
@@ -47,6 +48,7 @@ router.post("/", async (req, res) => {
           roomCode: code,
           status: 'waiting',
           isActive: isActive !== undefined ? isActive : true,
+          ownerId: req.user.id,
         });
         await room.save();
         break; // success
@@ -71,9 +73,9 @@ router.post("/", async (req, res) => {
 });
 
 // get one room
-router.get('/:id', async (req, res) => {
+router.get('/:id', requireAuth, async (req, res) => {
   try {
-    const room = await Room.findById(req.params.id);
+    const room = await Room.findOne({ _id: req.params.id, ownerId: req.user.id });
     if (!room) return res.status(404).json({ error: 'Room not found' });
     res.json(room);
   } catch (err) {
@@ -82,9 +84,9 @@ router.get('/:id', async (req, res) => {
 });
 
 // get players of a room
-router.get('/:id/players', async (req, res) => {
+router.get('/:id/players', requireAuth, async (req, res) => {
   try {
-    const room = await Room.findById(req.params.id);
+    const room = await Room.findOne({ _id: req.params.id, ownerId: req.user.id });
     if (!room) return res.status(404).json({ error: 'Room not found' });
     res.json(room.players || []);
   } catch (err) {
@@ -93,14 +95,15 @@ router.get('/:id/players', async (req, res) => {
 });
 
 // Student join room by roomId with name
-router.post('/:id/join', async (req, res) => {
+// Student join can be public (no requireAuth) — keep open by code/id if needed
+router.post('/:id/join', authOptional, async (req, res) => {
   try {
     const { id } = req.params;
     const { name } = req.body;
     if (!name || !name.trim()) {
       return res.status(400).json({ error: 'Missing player name' });
     }
-    const room = await Room.findById(id);
+  const room = await Room.findById(id);
     if (!room) return res.status(404).json({ error: 'Room not found' });
     if (room.status !== 'waiting') {
       return res.status(409).json({ error: 'Room already active or ended' });
@@ -119,27 +122,29 @@ router.post('/:id/join', async (req, res) => {
   }
 });
 
-// อัปเดตห้อง
-router.put("/:id", async (req, res) => {
+// อัปเดตห้อง (เฉพาะเจ้าของ)
+router.put("/:id", requireAuth, async (req, res) => {
   try {
     const { id } = req.params;
     const update = req.body;
-    const room = await Room.findByIdAndUpdate(
-      id,
+    const room = await Room.findOneAndUpdate(
+      { _id: id, ownerId: req.user.id },
       update,
       { new: true }
     );
+    if (!room) return res.status(404).json({ error: 'Room not found' });
     res.json(room);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
 
-// ลบห้อง
-router.delete("/:id", async (req, res) => {
+// ลบห้อง (เฉพาะเจ้าของ)
+router.delete("/:id", requireAuth, async (req, res) => {
   try {
     const { id } = req.params;
-    await Room.findByIdAndDelete(id);
+    const deleted = await Room.findOneAndDelete({ _id: id, ownerId: req.user.id });
+    if (!deleted) return res.status(404).json({ error: 'Room not found' });
     res.json({ message: "Room deleted" });
   } catch (err) {
     res.status(500).json({ error: err.message });
