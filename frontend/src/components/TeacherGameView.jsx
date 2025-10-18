@@ -26,19 +26,33 @@ export default function TeacherGameView() {
   useEffect(() => {
     const load = async () => {
       if (!roomId) return;
-      try {
-        const r = await fetch(`http://localhost:5000/api/game/room/${roomId}`);
-        const rj = await r.json();
-        if (rj?.success) setRoomInfo(rj.room);
+      const fetchJson = async (url, { retries = 2, delay = 400 } = {}) => {
+        let lastErr;
+        for (let i = 0; i <= retries; i++) {
+          try {
+            const res = await fetch(url, { mode: 'cors' });
+            // fetch doesn't throw on 4xx/5xx; try parsing json anyway
+            const data = await res.json().catch(() => ({}));
+            return { ok: res.ok, status: res.status, data };
+          } catch (err) {
+            lastErr = err;
+            if (i < retries) await new Promise(r => setTimeout(r, delay * (i + 1)));
+          }
+        }
+        throw lastErr || new Error('Failed to fetch');
+      };
 
-        const q = await fetch(`http://localhost:5000/api/game/questions/${roomId}`);
-        const qj = await q.json();
-        if (qj?.success) {
+      try {
+        const r = await fetchJson(`http://localhost:5000/api/game/room/${roomId}`);
+        if (r?.data?.success) setRoomInfo(r.data.room);
+
+        const q = await fetchJson(`http://localhost:5000/api/game/questions/${roomId}`);
+        if (q?.data?.success) {
           setRoomInfo((prev) => ({
             ...(prev || {}),
-            questions: qj.questions,
-            questionSetTitle: qj.questionSetTitle,
-            questionSetId: qj.questionSetId || prev?.questionSetId,
+            questions: q.data.questions,
+            questionSetTitle: q.data.questionSetTitle,
+            questionSetId: q.data.questionSetId || prev?.questionSetId,
           }));
         }
       } catch (e) {

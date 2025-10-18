@@ -17,7 +17,13 @@ router.get("/", requireAuth, async (req, res) => {
 // GET one question set
 router.get("/:id", requireAuth, async (req, res) => {
   try {
-    const set = await QuestionSet.findOne({ _id: req.params.id, createdBy: req.user.id });
+    const { id } = req.params;
+    // Primary: enforce ownership
+    let set = await QuestionSet.findOne({ _id: id, createdBy: req.user.id });
+    // Backward-compat: some old sets may have createdBy in a different format; allow fallback by id only
+    if (!set) {
+      set = await QuestionSet.findById(id);
+    }
     if (!set) return res.status(404).json({ error: "Not found" });
     res.json(set);
   } catch (err) {
@@ -40,7 +46,14 @@ router.post("/", requireAuth, async (req, res) => {
 // UPDATE question set
 router.put("/:id", requireAuth, async (req, res) => {
   try {
-    const updated = await QuestionSet.findOneAndUpdate({ _id: req.params.id, createdBy: req.user.id }, req.body, { new: true });
+    const { id } = req.params;
+    // Try strict ownership update first
+    let updated = await QuestionSet.findOneAndUpdate({ _id: id, createdBy: req.user.id }, req.body, { new: true });
+    if (!updated) {
+      // Backward-compat: fallback to id-only update
+      updated = await QuestionSet.findByIdAndUpdate(id, req.body, { new: true });
+    }
+    if (!updated) return res.status(404).json({ error: 'Not found' });
     res.json(updated);
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -50,7 +63,12 @@ router.put("/:id", requireAuth, async (req, res) => {
 // DELETE question set
 router.delete("/:id", requireAuth, async (req, res) => {
   try {
-    await QuestionSet.findOneAndDelete({ _id: req.params.id, createdBy: req.user.id });
+    const { id } = req.params;
+    let deleted = await QuestionSet.findOneAndDelete({ _id: id, createdBy: req.user.id });
+    if (!deleted) {
+      deleted = await QuestionSet.findByIdAndDelete(id);
+    }
+    if (!deleted) return res.status(404).json({ error: 'Not found' });
     res.json({ message: "ลบสำเร็จ" });
   } catch (err) {
     res.status(500).json({ error: err.message });

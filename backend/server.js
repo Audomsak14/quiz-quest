@@ -65,6 +65,8 @@ mongoose.connection.on("error", (err) => {
 app.use("/api/auth", authRoutes);
 app.use("/api/questions", questionRoutes);
 app.use("/api/questionsets", questionSetRoutes);
+// Backward compatibility alias: allow /api/questions/sets/* to access question set routes
+app.use("/api/questions/sets", questionSetRoutes);
 app.use("/api/rooms", roomRoutes);
 
 // Test route
