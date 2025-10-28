@@ -2,6 +2,7 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import socketManager from '../lib/socket';
+import { profileStorage } from '@/lib/profileStorage';
 
 // Add custom animations
 const customStyles = `
@@ -46,7 +47,7 @@ export default function MapGame() {
   const [roomId, setRoomId] = useState(() => searchParams.get('roomId') || '');
   const [playerName, setPlayerName] = useState(() => searchParams.get('playerName') || `Player_${Math.floor(Math.random()*1000)}`);
   // Allow explicit playerId via URL so teacher can open a student link that joins as that player
-  const [providedPlayerId] = useState(() => searchParams.get('playerId') || null);
+  const [providedPlayerId] = useState(() => searchParams.get('playerId') || profileStorage.ensureId(playerName) || null);
   // Role from query (default student). Used to filter visibility of teacher avatar
   const role = searchParams.get('role') || 'student';
   const [isConnected, setIsConnected] = useState(false);

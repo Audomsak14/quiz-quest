@@ -1,0 +1,65 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="128" viewBox="0 0 1024 128">
+  <defs>
+    <style>
+      .skin{fill:#ffd7b0}
+      .hair{fill:#18202d}
+      .hair2{fill:#0f1522}
+      .jacket{fill:#111827}
+      .tee{fill:#f8fafc}
+      .zip{fill:#9ca3af}
+      .pant{fill:#0f172a}
+      .cuff{fill:#e5e7eb}
+      .shoe{fill:#ffffff}
+      .sole{fill:#c7ced6}
+      .eye{fill:#0b1224}
+      .mouth{fill:#a04c22;opacity:.6}
+    </style>
+
+    <g id="boyCore">
+      <circle class="skin" cx="64" cy="42" r="18"/>
+      <path class="hair" d="M46,42c0-12,10-20,20-20c13,0,21,6,24,14c-9-2-15-1-20,1c-7,3-13,3-24,5z"/>
+      <path class="hair2" d="M84,32c-2-8-10-14-19-14c-7,0-14,3-18,8c3,2,9,3,16,3c8,0,15-1,21-3z"/>
+      <rect class="eye" x="52" y="38" width="10" height="6" rx="2"/>
+      <rect class="eye" x="66" y="38" width="10" height="6" rx="2"/>
+      <rect class="mouth" x="62" y="50" width="8" height="2" rx="1"/>
+      <path class="jacket" d="M49,60h30c6,0,10,6,10,12v18c0,6-4,10-10,10H49c-6,0-10-4-10-10V72c0-6,4-12,10-12z"/>
+      <rect class="tee" x="57" y="60" width="14" height="18"/>
+      <rect class="zip" x="64" y="60" width="2" height="40"/>
+      <circle class="jacket" cx="49" cy="74" r="8"/>
+      <circle class="jacket" cx="79" cy="74" r="8"/>
+    </g>
+
+    <g id="armL"><rect class="jacket" x="34" y="74" width="12" height="24" rx="6"/><rect class="cuff" x="34" y="96" width="12" height="6" rx="3"/><rect class="skin" x="38" y="102" width="8" height="6" rx="3"/></g>
+    <g id="armR"><rect class="jacket" x="82" y="74" width="12" height="24" rx="6"/><rect class="cuff" x="82" y="96" width="12" height="6" rx="3"/><rect class="skin" x="86" y="102" width="8" height="6" rx="3"/></g>
+
+    <g id="legL"><rect class="pant" x="54" y="96" width="12" height="22" rx="5"/><rect class="cuff" x="54" y="116" width="12" height="8" rx="3"/><ellipse class="sole" cx="60" cy="122" rx="12" ry="4"/><ellipse class="shoe" cx="60" cy="120" rx="12" ry="6"/></g>
+  <g id="legR"><rect class="pant" x="70" y="96" width="12" height="22" rx="5"/><rect class="cuff" x="70" y="116" width="12" height="8" rx="3"/><ellipse class="sole" cx="76" cy="122" rx="12" ry="4"/><ellipse class="shoe" cx="76" cy="120" rx="12" ry="6"/></g>
+
+  <g id="legL_back" transform="rotate(16 60 110)"><use href="#legL"/></g>
+  <g id="legL_forward" transform="rotate(-20 60 110)"><use href="#legL"/></g>
+  <g id="legR_back" transform="rotate(-16 76 110)"><use href="#legR"/></g>
+  <g id="legR_forward" transform="rotate(20 76 110)"><use href="#legR"/></g>
+
+    <g id="idle"><use href="#boyCore"/><use href="#armL"/><use href="#armR"/><use href="#legL"/><use href="#legR"/></g>
+  <g id="walkL_A"><g transform="translate(0,-2)"><use href="#boyCore"/><use href="#armL" transform="translate(-6,-6) rotate(-18 40 86)"/><use href="#armR" transform="translate(6,8) rotate(18 90 86)"/><use href="#legL_back" transform="translate(-12,0)"/><use href="#legR_forward" transform="translate(12,0)"/></g></g>
+  <g id="walkL_B"><g transform="translate(0,1)"><use href="#boyCore"/><use href="#armL" transform="translate(8,6) rotate(16 40 86)"/><use href="#armR" transform="translate(-8,-10) rotate(-20 90 86)"/><use href="#legL_forward" transform="translate(12,0)"/><use href="#legR_back" transform="translate(-12,0)"/></g></g>
+  <g id="walkR_A"><g transform="translate(0,-2)"><use href="#boyCore"/><use href="#armL" transform="translate(-8,8) rotate(18 40 86)"/><use href="#armR" transform="translate(8,-6) rotate(-18 90 86)"/><use href="#legL_forward" transform="translate(-12,0)"/><use href="#legR_back" transform="translate(12,0)"/></g></g>
+  <g id="walkR_B"><g transform="translate(0,1)"><use href="#boyCore"/><use href="#armL" transform="translate(10,-8) rotate(-18 40 86)"/><use href="#armR" transform="translate(-10,6) rotate(16 90 86)"/><use href="#legL_back" transform="translate(12,0)"/><use href="#legR_forward" transform="translate(-12,0)"/></g></g>
+    <g id="jumpUp"><g transform="translate(0,-8)"><use href="#boyCore"/><use href="#armL" transform="translate(-10,-20) rotate(-30 40 86)"/><use href="#armR" transform="translate(10,-20) rotate(30 90 86)"/><use href="#legL" transform="translate(-4,-10) rotate(-6 60 110)"/><use href="#legR" transform="translate(4,-10) rotate(6 76 110)"/></g></g>
+    <g id="jumpL"><g transform="translate(0,-8)"><use href="#boyCore"/><use href="#armL" transform="translate(-16,-22) rotate(-34 40 86)"/><use href="#armR" transform="translate(8,-14) rotate(18 90 86)"/><use href="#legL" transform="translate(-12,-8) rotate(-12 60 110)"/><use href="#legR" transform="translate(10,-8) rotate(10 76 110)"/></g></g>
+    <g id="jumpR"><g transform="translate(0,-8)"><use href="#boyCore"/><use href="#armL" transform="translate(-8,-14) rotate(18 40 86)"/><use href="#armR" transform="translate(16,-22) rotate(34 90 86)"/><use href="#legL" transform="translate(-10,-8) rotate(10 60 110)"/><use href="#legR" transform="translate(12,-10) rotate(-12 76 110)"/></g></g>
+  </defs>
+
+  <rect width="1024" height="128" fill="none"/>
+  <g>
+    <g transform="translate(0,0)"><use href="#idle"/></g>
+    <g transform="translate(128,0)"><use href="#walkL_A"/></g>
+    <g transform="translate(256,0)"><use href="#walkL_B"/></g>
+    <g transform="translate(384,0)"><use href="#walkR_A"/></g>
+    <g transform="translate(512,0)"><use href="#walkR_B"/></g>
+    <g transform="translate(640,0)"><use href="#jumpUp"/></g>
+    <g transform="translate(768,0)"><use href="#jumpL"/></g>
+    <g transform="translate(896,0)"><use href="#jumpR"/></g>
+  </g>
+</svg>

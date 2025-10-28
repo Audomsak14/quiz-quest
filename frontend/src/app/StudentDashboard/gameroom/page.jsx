@@ -165,26 +165,31 @@ export default function GameRoom() {
               </div>
             </div>
             
-            <div className="flex items-center space-x-6">
-              <div className="text-right">
-                <div className="text-xl font-bold text-white">{playerName || 'ผู้เล่น'}</div>
-                <div className="text-purple-300 font-medium">🟢 พร้อมเล่น</div>
-              </div>
+            <div className="flex items-center gap-4 md:gap-6">
               <button
                 onClick={openEditProfile}
-                className="group relative w-16 h-16 rounded-2xl bg-gradient-to-br from-purple-500 to-pink-500 flex items-center justify-center shadow-2xl hover:shadow-purple-500/25 transition-all duration-300 transform hover:scale-105"
+                className="group relative shrink-0 w-12 h-12 sm:w-14 sm:h-14 md:w-16 md:h-16 rounded-2xl bg-gradient-to-br from-purple-500 to-pink-500 flex items-center justify-center shadow-2xl hover:shadow-purple-500/25 transition-all duration-300"
+                aria-label="แก้ไขโปรไฟล์"
               >
                 {playerAvatar && playerAvatar.startsWith('data:') ? (
-                  <img 
-                    src={playerAvatar} 
-                    alt="Player Avatar" 
+                  <img
+                    src={playerAvatar}
+                    alt="Player Avatar"
                     className="w-full h-full rounded-2xl object-cover"
                   />
+                ) : (/^(\/|https?:)/.test(playerAvatar || '') || /\.(png|jpe?g|gif|webp|svg)$/i.test(playerAvatar || '')) ? (
+                  // If avatar is a URL/path (e.g., sprite file), show a clean sticker instead of raw text
+                  <span className="text-2xl sm:text-3xl">😊</span>
                 ) : (
-                  <span className="text-3xl">{playerAvatar || '😊'}</span>
+                  <span className="text-2xl sm:text-3xl">{playerAvatar || '😊'}</span>
                 )}
-                <div className="absolute -top-1 -right-1 w-6 h-6 bg-green-500 rounded-full border-2 border-white animate-pulse"></div>
+                {/* status dot pinned inside avatar, not over the name */}
+                <div className="absolute -bottom-1 -right-1 w-5 h-5 sm:w-6 sm:h-6 bg-green-500 rounded-full ring-2 ring-white"></div>
               </button>
+              <div className="min-w-0 text-right">
+                <div className="text-lg md:text-xl font-bold text-white truncate max-w-[40vw] md:max-w-[24rem]">{playerName || 'ผู้เล่น'}</div>
+                <div className="text-purple-300 font-medium whitespace-nowrap">🟢 พร้อมเล่น</div>
+              </div>
             </div>
           </div>
         </div>
@@ -364,13 +369,16 @@ export default function GameRoom() {
               <div className="relative">
                 <div className="w-24 h-24 rounded-2xl bg-gradient-to-br from-purple-500 to-pink-500 flex items-center justify-center text-4xl relative overflow-hidden shadow-2xl">
                   {tempPlayerAvatar && tempPlayerAvatar.startsWith('data:') ? (
-                    <img 
-                      src={tempPlayerAvatar} 
-                      alt="Temp Avatar" 
+                    <img
+                      src={tempPlayerAvatar}
+                      alt="Temp Avatar"
                       className="w-full h-full object-cover rounded-2xl"
                     />
+                  ) : (/^(\/|https?:)/.test((tempPlayerAvatar || playerAvatar || '')) || /\.(png|jpe?g|gif|webp|svg)$/i.test((tempPlayerAvatar || playerAvatar || ''))) ? (
+                    // If the value looks like a URL/path to an image (e.g., sprite), show a clean sticker instead of text
+                    <span className="text-4xl">😊</span>
                   ) : (
-                    <span>{tempPlayerAvatar || playerAvatar || '😊'}</span>
+                    <span className="text-4xl">{tempPlayerAvatar || playerAvatar || '😊'}</span>
                   )}
                 </div>
                 <div className="absolute -bottom-2 -right-2 w-8 h-8 bg-green-500 rounded-full border-2 border-white flex items-center justify-center">

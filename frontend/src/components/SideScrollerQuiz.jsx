@@ -2,6 +2,7 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import socketManager from "../lib/socket";
+import { profileStorage } from "@/lib/profileStorage";
 
 // Helpers
 function rectIntersect(x1, y1, w1, h1, x2, y2, w2, h2) {
@@ -27,12 +28,12 @@ export default function SideScrollerQuiz() {
 
   const [roomId] = useState(() => searchParams.get("roomId") || "");
   const [playerName] = useState(() => searchParams.get("playerName") || `Player_${Math.floor(Math.random()*1000)}`);
-  const [providedPlayerId] = useState(() => searchParams.get("playerId") || null);
+  const [providedPlayerId] = useState(() => searchParams.get("playerId") || profileStorage.ensureId(playerName) || null);
   const role = "student";
 
   // Canvas/world
   const VIEW_W = 1200;
-  const VIEW_H = 700;
+  const VIEW_H = 560; // reduced from 700 to make the play box smaller
   const [worldW, setWorldW] = useState(3600);
   const GROUND_H = 120;
   const GROUND_Y = VIEW_H - GROUND_H;
@@ -82,6 +83,36 @@ export default function SideScrollerQuiz() {
   const completedOnceRef = useRef(false);
   const [uiTick, setUiTick] = useState(0);
   const lastQuestionOpenAtRef = useRef(0);
+  const avatarRef = useRef(null);
+  const [avatarReady, setAvatarReady] = useState(false);
+  // Animation timekeeper for smooth walk cycles
+  const animRef = useRef({ lastTime: 0, walkT: 0 });
+  // Smooth blend 0..1 for starting/stopping walk
+  const walkBlendRef = useRef(0);
+  // Debug overlay toggle (F3) or via query ?debug=1
+  const [showDebug, setShowDebug] = useState(() => searchParams.get("debug") === "1");
+  // Exact mode: draw frames without extra lean/bob/tilt for pixel-perfect matching of provided art
+  const exactMode = (searchParams.get("exact") === "1");
+  // Option to hide avatar completely (visual only)
+  const hideAvatar = (searchParams.get("nochar") === "1" || searchParams.get("hide") === "1" || searchParams.get("avatar") === "0");
+  // Optional tuning via query: ?scale=0.9 to shrink, ?y=6 to sink feet 6px into ground (below dashed line)
+  const scaleParam = (() => { const v = parseFloat(searchParams.get("scale") || ""); return Number.isFinite(v) && v > 0 ? v : null; })();
+  const yParam = (() => { const v = parseInt(searchParams.get("y") || "", 10); return Number.isFinite(v) ? v : null; })();
+  // Walk-tuning params: cadence (FPS), swing (amplitude scale 0..2), dwell (heel-strike linger 0..2)
+  const cadenceParam = (() => { const v = parseFloat(searchParams.get("cadence") || ""); return Number.isFinite(v) && v > 0 ? v : null; })();
+  const swingParam = (() => { const v = parseFloat(searchParams.get("swing") || ""); return Number.isFinite(v) && v >= 0 ? v : null; })();
+  const dwellParam = (() => { const v = parseFloat(searchParams.get("dwell") || ""); return Number.isFinite(v) && v >= 0 ? v : null; })();
+  // Allow choosing the default bundled character when forceDefault=1
+  const defaultCharParam = (searchParams.get("default") || searchParams.get("char") || searchParams.get("gender") || "").toLowerCase();
+  // Facing direction: 1 = right, -1 = left. Persist last non-zero motion.
+  const facingRef = useRef(1);
+  // Sprite sheet grid detection (for multi-pose assets). If not present, fall back to simple image/2-row logic.
+  const spriteColsRef = useRef(0); // e.g., 6
+  const spriteRowsRef = useRef(0); // e.g., 2
+  const useSpriteGridRef = useRef(false);
+  const chosenRowIndexRef = useRef(0); // 0=top (male), 1=bottom (female)
+  // Grid type hint: '8x2', '8x1', '6x2', '6x1', '2x2gender', 'strip1'(N x 1), 'none'
+  const gridTypeRef = useRef('none');
 
   // Ensure no buffered jump from overlays
   useEffect(() => {
@@ -135,7 +166,8 @@ export default function SideScrollerQuiz() {
         const localPlatforms = [];
         const platLevels = [
           { dy: 120, w: 260 },
-          { dy: 170, w: 220 },
+          // Lower the higher platform slightly to make it reachable
+          { dy: 150, w: 220 },
         ];
 
         const qs = (qArr.length ? qArr : Array.from({ length: count }).map((_, i) => ({ id: `q${i+1}`, text: `Q${i+1}`, choices: ["A","B","C","D"], answerIndex: i % 4, points: 100 })))
@@ -170,7 +202,8 @@ export default function SideScrollerQuiz() {
           const usePlat = i % 3 !== 0;
           let y = GROUND_Y - 40;
           if (usePlat) {
-            const dy = i % 2 ? 120 : 170; const w = i % 2 ? 260 : 220; const px = center + off - w / 2; const py = GROUND_Y - dy;
+            // Mirror lowered platform height in fallback as well (170 -> 150)
+            const dy = i % 2 ? 120 : 150; const w = i % 2 ? 260 : 220; const px = center + off - w / 2; const py = GROUND_Y - dy;
             localPlatforms.push({ x: px, y: py, w, h: 18 }); y = py - 40;
           }
           return ({ id: `q${i+1}`, x: center + off, y, question: { id: `q${i+1}`, text: `คำถามตัวอย่าง ${i+1}`, choices: ["A","B","C","D"], answerIndex: i % 4, points: 100 } });
@@ -186,6 +219,60 @@ export default function SideScrollerQuiz() {
     const b = (questionSpots || []).map(s => ({ id: s.id, x: s.x, y: s.y, bounceY: 0, bounceV: 0, prevOverlap: false }));
     setBlocks(b);
   }, [questionSpots]);
+
+  // Load avatar image saved from the character designer
+  useEffect(() => {
+    if (hideAvatar) { avatarRef.current = null; setAvatarReady(false); return; }
+    try {
+  const forceDefault = searchParams.get("forceDefault") === "1";
+      const dataUrl = forceDefault ? null : profileStorage.getImage();
+      const charId = profileStorage.getCharacterId?.();
+      chosenRowIndexRef.current = charId === 'female' ? 1 : 0;
+      if (dataUrl) {
+        const img = new Image();
+        img.crossOrigin = "anonymous";
+        img.onload = () => {
+          avatarRef.current = img; setAvatarReady(true);
+          // Prefer naturalWidth/Height for SVG or images without explicit width/height attributes
+          const nW = (img.naturalWidth || img.width || 0);
+          const nH = (img.naturalHeight || img.height || 0);
+          // Detect sprite grid using aspect ratio to disambiguate Nx1 vs Nx2 sheets.
+          // Square frames imply these exact ratios:
+          // 8x1 -> nW/nH = 8  |  8x2 -> nW/nH = 4
+          // 6x1 -> nW/nH = 6  |  6x2 -> nW/nH = 3
+          const ratio = nH > 0 ? (nW / nH) : 0;
+          const near = (a, b) => Math.abs(a - b) < 0.02; // small tolerance for rounding
+          const looks8x1 = (nW % 8 === 0) && near(ratio, 8);
+          const looks8x2 = (nW % 8 === 0) && (nH % 2 === 0) && near(ratio, 4);
+          const looks6x1 = (nW % 6 === 0) && near(ratio, 6);
+          const looks6x2 = (nW % 6 === 0) && (nH % 2 === 0) && near(ratio, 3);
+          // Generic single-row strip with square frames (e.g., 9x1)
+          const looksStrip1 = nH > 0 && (nW % nH === 0) && (ratio >= 3 && ratio <= 16);
+          if (looks8x1) {
+            spriteColsRef.current = 8; spriteRowsRef.current = 1; useSpriteGridRef.current = true; gridTypeRef.current = '8x1';
+          } else if (looks8x2) {
+            spriteColsRef.current = 8; spriteRowsRef.current = 2; useSpriteGridRef.current = true; gridTypeRef.current = '8x2';
+          } else if (looks6x2) {
+            spriteColsRef.current = 6; spriteRowsRef.current = 2; useSpriteGridRef.current = true; gridTypeRef.current = '6x2';
+          } else if (looks6x1) {
+            spriteColsRef.current = 6; spriteRowsRef.current = 1; useSpriteGridRef.current = true; gridTypeRef.current = '6x1';
+          } else if (looksStrip1) {
+            spriteColsRef.current = Math.round(nW / nH); spriteRowsRef.current = 1; useSpriteGridRef.current = true; gridTypeRef.current = 'strip1';
+          } else if (nW % 2 === 0 && nH % 2 === 0 && nW > 0 && nH > 0) {
+            // Generic 2x2 sheet (left column male, right column female; top=ground, bottom=jump)
+            spriteColsRef.current = 2; spriteRowsRef.current = 2; useSpriteGridRef.current = true; gridTypeRef.current = '2x2gender';
+          } else {
+            spriteColsRef.current = 0; spriteRowsRef.current = 0; useSpriteGridRef.current = false; gridTypeRef.current = 'none';
+          }
+        };
+        img.onerror = () => { avatarRef.current = null; setAvatarReady(false); };
+        img.src = dataUrl;
+        return;
+      }
+    } catch {}
+    // No custom image and no bundled fallback: keep avatar null (use simple placeholder drawing)
+    avatarRef.current = null; setAvatarReady(false);
+  }, []);
 
   // Lightweight UI heartbeat
   useEffect(() => {
@@ -304,6 +391,10 @@ export default function SideScrollerQuiz() {
         if (!inp.jumpHeld) { inp.jumpPressed = true; inp.jumpPressedAt = performance.now(); }
         inp.jumpHeld = true;
       }
+      // Toggle debug overlay
+      if (c === "F3") {
+        setShowDebug((v) => !v);
+      }
     };
     const up = (e) => {
       const c = e.code;
@@ -327,6 +418,8 @@ export default function SideScrollerQuiz() {
 
     const step = () => {
       const now = performance.now();
+      // initialize animation time base
+      if (!animRef.current.lastTime) animRef.current.lastTime = now;
       if (gameStarted && !showQuestion) {
         const pos = posRef.current; const vel = velRef.current; const inp = inputsRef.current;
         const wasGrounded = onGroundRef.current;
@@ -356,6 +449,9 @@ export default function SideScrollerQuiz() {
 
         // world bounds
         if (pos.x < 40) pos.x = 40; if (pos.x > worldW - 40) pos.x = worldW - 40;
+
+  // update facing based on actual movement (not key only) so gamepads or inertia work
+  if (vel.x > 0.25) facingRef.current = 1; else if (vel.x < -0.25) facingRef.current = -1;
 
         // ground collide
   if (pos.y + 40 >= GROUND_Y && vel.y >= 0) { pos.y = GROUND_Y - 40; vel.y = 0; if (!wasGrounded) lastLandingAtRef.current = now; footOnSurface = true; supportTypeRef.current = 'ground'; supportYRef.current = GROUND_Y; }
@@ -395,7 +491,7 @@ export default function SideScrollerQuiz() {
   if (!footOnSurface) { supportTypeRef.current = 'air'; supportYRef.current = null; }
         if (!footOnSurface && wasGrounded && vel.y === 0) vel.y = 1.5; // start falling if stepped off
 
-        // camera follow
+  // camera follow
         cameraXRef.current = Math.max(0, Math.min(worldW - VIEW_W, pos.x - VIEW_W / 2));
 
         // emit movement (throttle)
@@ -440,6 +536,26 @@ export default function SideScrollerQuiz() {
           if (Math.abs(b.bounceY) < 0.05 && Math.abs(b.bounceV) < 0.05) { b.bounceY = 0; b.bounceV = 0; return; }
           b.bounceV += 0.45; b.bounceY += b.bounceV; if (b.bounceY > 0) { b.bounceY = 0; b.bounceV = 0; }
         });
+      }
+
+      // advance animation timer (speed-aware for walk cycles)
+      {
+        const vx = Math.abs(velRef.current.x || 0);
+        const running = onGroundRef.current && vx >= 0.25;
+        const baseFps = cadenceParam ?? 9.0; // tunable cadence (frames per second)
+        const speedFactor = running ? Math.min(2.0, Math.max(0.5, vx / SPEED)) : 0;
+        // Smoothly blend in/out when starting or stopping
+        const dt = Math.max(0, (now - animRef.current.lastTime) / 1000);
+        const blend = walkBlendRef.current;
+        const targetBlend = running ? 1 : 0;
+        const rate = running ? 9 : 12; // ramp in/out faster
+        walkBlendRef.current = Math.max(0, Math.min(1, blend + (targetBlend - blend) * Math.min(1, dt * rate)));
+        // Keep a stronger floor so steps don't look frozen at start/stop
+        const blendFloor = 0.5;
+        const effBlend = Math.max(blendFloor, walkBlendRef.current);
+        const fps = baseFps * (0.85 + 0.65 * speedFactor) * (0.5 + 0.5 * effBlend);
+        if (running || walkBlendRef.current > 0.01) animRef.current.walkT += dt * fps; // t in frames, not seconds
+        animRef.current.lastTime = now;
       }
 
       draw();
@@ -489,18 +605,229 @@ export default function SideScrollerQuiz() {
         });
       }
 
-      // me
+      if (!hideAvatar) {
+      // me (animated: facing, walk bob, jump tilt)
   const meX = pos.x - cam; const meY = pos.y;
   const onSupport = onGroundRef.current && (supportTypeRef.current === 'platform' || supportTypeRef.current === 'ground') && (typeof supportYRef.current === 'number');
-  // radius of body is 20px; align bottom to support top minus gap
-  const drawY = onSupport ? (supportYRef.current - 20 - VISUAL_PLATFORM_GAP) : meY;
-  const running = Math.abs(velRef.current.x) > 0.1 && onGroundRef.current; const t = performance.now() / 120;
-  ctx.fillStyle = "#2563eb"; ctx.beginPath(); ctx.arc(meX, drawY, 20, 0, Math.PI * 2); ctx.fill();
-  ctx.fillStyle = "#ef4444"; ctx.fillRect(meX - 20, drawY - 28, 40, 10); ctx.beginPath(); ctx.arc(meX, drawY - 28, 20, Math.PI, 0); ctx.fill();
-      ctx.strokeStyle = "#0f172a"; ctx.lineWidth = 3; const legSwing = running ? Math.sin(t) * 6 : 0;
-  ctx.beginPath(); ctx.moveTo(meX - 6, drawY + 20); ctx.lineTo(meX - 6 - legSwing, drawY + 28); ctx.stroke();
-  ctx.beginPath(); ctx.moveTo(meX + 6, drawY + 20); ctx.lineTo(meX + 6 + legSwing, drawY + 28); ctx.stroke();
-  ctx.fillStyle = "#ffffff"; ctx.font = "12px sans-serif"; ctx.textAlign = "center"; ctx.fillText(`${playerName} (คุณ) · ${playerProgress.answered.length}`, meX, drawY - 34);
+  // Translate to the exact top surface (ground/platform). Local y=0 is the feet baseline.
+  const drawYBase = onSupport ? (supportYRef.current - VISUAL_PLATFORM_GAP) : meY;
+  const running = Math.abs(velRef.current.x) > 0.1 && onGroundRef.current;
+  const airborne = !onGroundRef.current;
+  let dir = facingRef.current || 1;
+  const t = animRef.current.walkT; // frame-based; used for bob/swing rhythms
+
+  // motion styling
+  const usingGrid = !!useSpriteGridRef.current; const gridType = gridTypeRef.current;
+  const disableStylize = exactMode || gridType === '2x2gender';
+  const vxAbs = Math.abs(velRef.current.x || 0);
+  const speedFactor = running ? Math.min(1.5, Math.max(0.0, vxAbs / SPEED)) : 0;
+  const ampScale = swingParam ?? 1.0; // user-tunable swing amplitude
+  const bobAmp = 4.2 * (0.5 + 0.5 * speedFactor) * ampScale;
+  const bobBlend = walkBlendRef.current || 0;
+  const bob = disableStylize ? 0 : (running ? Math.sin(t * 1.0) * bobAmp * bobBlend : 0);
+  let angle = 0; // rotate around feet for natural lean
+  let yPose = 0; // extra vertical offset for poses
+  if (!disableStylize) {
+    if (airborne) {
+      if (velRef.current.y < -2) { angle = -0.18 * dir; yPose = -6; }
+      else if (velRef.current.y > 2) { angle = 0.15 * dir; yPose = 2; }
+    } else if (running) {
+      angle = (0.16 * ampScale) * dir * (walkBlendRef.current || 0);
+    }
+  }
+
+  // Keep feet pinned to ground/platform when onGround by not adding bob/yPose to drawY
+  const drawY = onGroundRef.current ? drawYBase : (drawYBase + bob + yPose);
+  const avatar = avatarRef.current;
+  // Base destination size target; width may adapt to keep frame aspect ratio
+  const baseH = 88;
+
+  ctx.save();
+  ctx.imageSmoothingEnabled = true; ctx.imageSmoothingQuality = 'high';
+  // translate to feet position, add subtle horizontal sway, then rotate and flip by facing
+  // Snap to integer pixels to avoid subpixel gaps between feet and surfaces
+  ctx.translate(Math.round(meX), Math.round(drawY));
+  const sway = disableStylize ? 0 : (running ? Math.sin(t * 1.0) * (1.5 * ampScale) * (walkBlendRef.current || 0) : 0);
+  if (sway) ctx.translate(sway, 0);
+  // If using a grid that already contains left/right frames (6x*, 8x*), don't flip.
+  if (!(usingGrid && (gridType === '6x1' || gridType === '6x2' || gridType === '8x1' || gridType === '8x2'))) ctx.scale(dir, 1);
+  ctx.rotate(angle);
+  if (avatar) {
+    // draw centered at feet with bottom alignment
+    // Use natural size to ensure correct slicing for SVG/PNG
+    const aW = avatar.naturalWidth || avatar.width;
+    const aH = avatar.naturalHeight || avatar.height;
+    let sX = 0, sY = 0, sW = aW, sH = aH;
+    if (usingGrid) {
+      const cols = spriteColsRef.current || 6; const rows = spriteRowsRef.current || 2;
+      sW = Math.floor(aW / cols); sH = Math.floor(aH / rows);
+      if (gridType === '2x2gender') {
+        // Columns select gender, rows select ground/jump
+        const col = (chosenRowIndexRef.current || 0) === 1 ? 1 : 0; // 0=male(left), 1=female(right)
+        const row = airborne ? 1 : 0; // 0=ground(top), 1=jump(bottom)
+        sX = col * sW; sY = row * sH;
+      } else if (gridType === '8x1' || gridType === '8x2') {
+        // Column mapping for 8 cols (square frames expected):
+        // 0 Idle, 1 WalkL_A, 2 WalkL_B, 3 WalkR_A, 4 WalkR_B, 5 JumpUp, 6 JumpL, 7 JumpR
+        let col = 0; const vx = velRef.current.x; const ax = Math.abs(vx);
+        const walking = !airborne && ax >= 0.25;
+        if (airborne) {
+          if (ax < 0.25) col = 5; else if (vx < 0) col = 6; else col = 7;
+        } else if (walking) {
+          // Use animRef.walkT to alternate A/B with slight dwell on contact frame
+          const spd = Math.min(1.5, Math.max(0.0, ax / SPEED));
+          const heelScale = dwellParam ?? 1.0;
+          const weights = [ (1.15 + 0.4 * spd) * heelScale, 0.85 ]; // heel strike linger scales with speed and user dwell
+          const total = weights[0] + weights[1];
+          let t = animRef.current.walkT % total;
+          const idx = (t < weights[0]) ? 0 : 1; // 0=A, 1=B
+          if (vx < 0) col = idx === 0 ? 1 : 2; else col = idx === 0 ? 3 : 4;
+        } else {
+          col = 0;
+        }
+        const row = Math.max(0, Math.min(rows - 1, chosenRowIndexRef.current || 0));
+        sX = col * sW; sY = row * sH;
+  } else if (gridType === 'strip1') {
+        // Generic N x 1 strip (square frames). Heuristics:
+        // - col 0: idle
+        // - walk: cycle frames 1..(N-2) at speed-aware rate
+        // - jump: last frame (N-1)
+        // Flipping is enabled earlier for non 6x/8x grids, so left/right is handled by ctx.scale(dir,1)
+        let col = 0;
+        const cols = Math.max(3, spriteColsRef.current || 3);
+        const vx = Math.abs(velRef.current.x);
+        const walking = !airborne && vx >= 0.25;
+        if (airborne) {
+          col = cols - 1; // use last frame for jump
+        } else if (walking) {
+          // Use animRef.walkT (already speed-adjusted) to drive a continuous cycle
+          // with dwell weights to mimic human heel-strike/toe-off
+          const cycleLen = Math.max(2, cols - 2);
+          if (cycleLen <= 2) {
+            const tWalk = Math.floor(animRef.current.walkT) % cycleLen; // fallback
+            col = 1 + tWalk;
+          } else {
+            // build symmetric dwell weights [contact, pass, pass, contact, pass, ...]
+            const weights = Array.from({ length: cycleLen }, (_, i) => 1);
+            weights[0] += 0.6; // heel strike dwell
+            weights[cycleLen - 1] += 0.6; // opposite heel strike
+            weights[Math.floor(cycleLen / 2)] += 0.4; // toe-off subtle dwell
+            const total = weights.reduce((a, b) => a + b, 0);
+            let tWalk = animRef.current.walkT % total;
+            let idx = 0;
+            for (let i = 0; i < cycleLen; i++) {
+              if (tWalk < weights[i]) { idx = i; break; }
+              tWalk -= weights[i];
+            }
+            col = 1 + idx;
+          }
+        } else {
+          col = 0; // idle
+        }
+        const row = 0;
+        sX = col * sW; sY = row * sH;
+      } else {
+        // 6x1 or 6x2: decide column by state and add simple two-step walk cycle (idle<->walk)
+        let col = 0;
+        const vx = velRef.current.x;
+        const isWalk = !airborne && Math.abs(vx) >= 0.25;
+        // Tie the two-frame walk toggle to the same walk timer so cadenceParam affects 6x sheets as well
+        const phase = (Math.floor(animRef.current.walkT) % 2);
+        if (airborne) {
+          if (Math.abs(vx) < 0.25) col = 3; // Jump up
+          else if (vx < 0) col = 4; // Jump left
+          else col = 5; // Jump right
+        } else if (isWalk) {
+          if (vx < 0) col = (phase ? 0 : 1); // alternate Idle <-> WalkL
+          else col = (phase ? 0 : 2);       // alternate Idle <-> WalkR
+        } else {
+          col = 0; // Idle
+        }
+        const row = Math.max(0, Math.min(rows - 1, chosenRowIndexRef.current || 0));
+        sX = col * sW; sY = row * sH;
+      }
+    } else {
+      // If the avatar looks like a stacked 2-frame sprite (top=ground, bottom=jump),
+      // slice and pick the appropriate half. Otherwise draw full image.
+      const rows = 2; // assume 2 rows (ground/jump). Safe fallback for non-sprites
+      const useJumpFrame = airborne; // bottom half when airborne
+      sH = Math.floor(aH / rows) || aH;
+      sY = useJumpFrame ? sH : 0;
+      sX = 0; sW = aW;
+    }
+    // Preserve frame aspect ratio; target a clear, readable size
+  const scaleBoost = gridType === '8x1' ? 1.20 : (gridType === '2x2gender' ? 1.12 : 1.0);
+  // In exact mode, keep native scale; otherwise shrink slightly for readability
+  const sizeTune = scaleParam ?? (exactMode ? 1.0 : 0.92);
+  const destH = Math.round(baseH * scaleBoost * sizeTune);
+    const aspect = sW > 0 && sH > 0 ? (sW / sH) : 1;
+    const destW = Math.max(48, Math.min(112, Math.round(destH * aspect)));
+  // Calibrate feet: bottom of sprite sits at local y=(0 + userYOffset) which is the feet baseline
+  // Defaults set to 0 so feet align exactly on ground/platform; override via ?y= if needed.
+  const defaultYByGrid = (() => {
+    // Positive moves the sprite DOWN into the ground; negative lifts it up
+    // Slight +4px sink to visually "stick" feet to surfaces and hide tiny frame/bob discrepancies.
+    if (gridType === '8x2') return 4;
+    if (gridType === '8x1') return 4;
+    if (gridType === '6x2' || gridType === '6x1') return 4;
+    if (gridType === '2x2gender') return 4;
+    return 4;
+  })();
+  const userYOffset = (yParam ?? defaultYByGrid);
+  const extraPad = (gridType === '2x2gender' && !exactMode) ? 2 : 0;
+  // Place sprite so that its bottom (feet) touch the ground line, with head fully visible above
+  const x = -destW/2, y = -destH + userYOffset + extraPad;
+    // Always draw without canvas clipping to avoid accidental head cropping
+    ctx.drawImage(avatar, sX, sY, sW, sH, x, y, destW, destH);
+    // Optional canvas debug guides (frame box and foot line)
+    if (showDebug) {
+      ctx.save();
+      ctx.strokeStyle = "red";
+      ctx.lineWidth = 1.5;
+      ctx.strokeRect(x, y, destW, destH);
+      // Foot line at local y=0 (after translate, before destH offset)
+      ctx.strokeStyle = "green";
+      ctx.beginPath();
+      ctx.moveTo(-destW / 2, 0);
+      ctx.lineTo(destW / 2, 0);
+      ctx.stroke();
+      ctx.restore();
+    }
+  } else {
+    // fallback simple character with clearer walk/jump pose
+    // Shift fallback drawing so that feet land exactly on local y=0
+    ctx.save();
+    ctx.translate(0, -28);
+    ctx.fillStyle = "#2563eb"; ctx.beginPath(); ctx.arc(0, 0, 20, 0, Math.PI * 2); ctx.fill(); // body
+    ctx.fillStyle = "#ef4444"; ctx.fillRect(-20, -28, 40, 10); ctx.beginPath(); ctx.arc(0, -28, 20, Math.PI, 0); ctx.fill(); // head/torso
+    ctx.restore();
+  }
+
+  // Limbs overlay: draw only for fallback shape. If avatar image exists,
+  // don't add extra lines because the sprite already has its own arms/legs.
+  if (!avatar) {
+    ctx.strokeStyle = "#0f172a"; ctx.lineWidth = 3;
+    const swing = running ? Math.sin(t) * 7 : 0;
+    const armSwing = running ? Math.cos(t) * 6 : 0;
+    if (airborne) {
+      // tuck legs slightly backward, arms up for jump
+      ctx.beginPath(); ctx.moveTo(-6, -8); ctx.lineTo(-12, -2); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(6, -8); ctx.lineTo(12, -2); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(-12, -48); ctx.lineTo(-6, -60); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(12, -48); ctx.lineTo(6, -60); ctx.stroke();
+    } else {
+      // walking: legs swing and arm counter-swing
+      ctx.beginPath(); ctx.moveTo(-6, -8); ctx.lineTo(-6 - swing, 0); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(6, -8); ctx.lineTo(6 + swing, 0); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(-12, -42); ctx.lineTo(-12 + armSwing, -34); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(12, -42); ctx.lineTo(12 - armSwing, -34); ctx.stroke();
+    }
+  }
+  ctx.restore();
+
+  // name tag
+  ctx.fillStyle = "#ffffff"; ctx.font = "12px sans-serif"; ctx.textAlign = "center"; ctx.fillText(`${playerName} (คุณ) · ${playerProgress.answered.length}`, meX, drawYBase - 34);
+      } // end if !hideAvatar
     };
 
     raf = requestAnimationFrame(step);
@@ -531,7 +858,11 @@ export default function SideScrollerQuiz() {
       <div className="w-full max-w-6xl rounded-3xl shadow-xl bg-white/70 backdrop-blur-sm p-3 mb-3 flex items-center justify-between">
         <div className="text-sm text-gray-700 font-semibold">{playerName} • Room: {roomId}</div>
         <div className="text-sm">Score: <span className="font-bold text-emerald-700">{playerProgress.score}</span> • Answered: {playerProgress.answered.length}/{questionSpots.length}</div>
-        <div className="text-xs text-gray-500">ปุ่ม: A/D หรือ ←/→ เดิน, W/↑/Space กระโดด</div>
+        <div className="flex items-center gap-3">
+          <div className="text-xs text-gray-500 hidden sm:block">ปุ่ม: A/D หรือ ←/→ เดิน, W/↑/Space กระโดด</div>
+          {/* Removed on-screen debug/y-offset controls per request; F3 and URL params still work */}
+          {/* Removed reset button per request */}
+        </div>
       </div>
 
       <div className="w-full max-w-6xl mb-3">
@@ -567,8 +898,22 @@ export default function SideScrollerQuiz() {
         </div>
       </div>
 
-      <div className="w-full max-w-6xl rounded-3xl overflow-hidden shadow-2xl border border-white/40 bg-[#9bd1ff]">
-        <canvas ref={canvasRef} width={VIEW_W} height={VIEW_H} className="w-full h-[700px] block" />
+      <div className="w-full max-w-6xl rounded-3xl overflow-hidden shadow-2xl border border-white/40 bg-[#9bd1ff] relative">
+        <canvas ref={canvasRef} width={VIEW_W} height={VIEW_H} className="w-full h-[560px] block" />
+        {showDebug && (
+          <div className="absolute m-2 p-2 top-0 left-1/2 -translate-x-1/2 bg-white/90 text-[11px] text-gray-800 rounded shadow border border-gray-200">
+            <div className="font-semibold">Debug</div>
+            <div>avatarReady: {String(avatarReady)}</div>
+            <div>grid: {gridTypeRef.current} ({spriteColsRef.current}x{spriteRowsRef.current})</div>
+            <div>facing: {facingRef.current}</div>
+            <div>onGround: {String(onGroundRef.current)}</div>
+            <div>vx, vy: {velRef.current.x.toFixed(2)}, {velRef.current.y.toFixed(2)}</div>
+            <div>support: {supportTypeRef.current}{typeof supportYRef.current === 'number' ? `@${supportYRef.current}` : ''}</div>
+            <div>exactMode: {String(exactMode)}</div>
+            <div>destH/yOff: {(() => { try { const a = avatarRef.current; if (!a) return '—'; const cols = spriteColsRef.current||1; const rows = spriteRowsRef.current||1; const sW = Math.floor((a.naturalWidth||a.width||0)/cols)||0; const sH = Math.floor((a.naturalHeight||a.height||0)/rows)||0; const baseH=88; const scaleBoost = (gridTypeRef.current==='8x1'?1.20:(gridTypeRef.current==='2x2gender'?1.12:1.0)); const sizeTune = (typeof scaleParam==='number'? scaleParam : (exactMode?1.0:0.92)); const dH = Math.round(baseH*scaleBoost*sizeTune); const gt=gridTypeRef.current; const yDef = (typeof yParam==='number'? yParam : 0); return `${dH}/${yDef}`; } catch { return '—'; } })()}</div>
+            <div className="text-gray-500">F3 เพื่อซ่อน/แสดง</div>
+          </div>
+        )}
       </div>
 
       {!gameStarted && (<div className="mt-4 text-center text-amber-700 bg-amber-100 border border-amber-300 px-4 py-2 rounded-xl">รอครูเริ่มเกมอยู่...</div>)}

@@ -1,0 +1,214 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="2048" height="256" viewBox="0 0 2048 256">
+  <defs>
+    <style>
+      .skin{fill:#ffd5ba}
+  .hair{fill:#f24eac}
+  .hairDark{fill:#b72a7a}
+  .hairLight{fill:#ffd1ea;opacity:.5}
+      .dress{fill:#7a55ff}
+      .dot{fill:#382f74}
+      .sock{fill:#c9b2ff}
+      .shoe{fill:#6f57ff}
+      .eye{fill:#1d1840}
+      .mouth{fill:none;stroke:#ff7aa2;stroke-width:3;stroke-linecap:round}
+  .bow{fill:#e53935}
+  .bowKnot{fill:#b71c1c}
+      .metal{fill:#d9b76e}
+      .shine{fill:#ffffff;opacity:.35}
+      /* new outfit */
+      .shirt{fill:#bfe8d9}
+      .shirtDark{fill:#9dd2c2}
+      .pants{fill:#1f1f1f}
+      .belt{fill:#0f0f10}
+      .buckle{fill:#d9b76e}
+      .cuff{fill:#dedede}
+      .shoeW{fill:#f6f8fb}
+      .sole{fill:#cdd6df}
+      .accent{fill:#2a55b7}
+      .lace{stroke:#b7c7ff;stroke-width:2;stroke-linecap:round}
+    </style>
+  <!-- Cute girl core (without arms/legs) -->
+  <g id="girlCore">
+      <!-- hair (wavy brunette with right-swept fringe) -->
+      <g id="hairWavy">
+        <!-- back mass -->
+        <path class="hair" d="M22 52c0-26 30-48 68-48s68 22 68 48c0 28-10 49-26 66-8 9-12 17-12 24 0 8-12 14-30 14H90c-18 0-30-6-30-14 0-7-4-15-12-24C32 101 22 80 22 52Z"/>
+        <!-- left waves -->
+        <path class="hairDark" d="M40 58c-10 10-12 24-8 34 4 12 14 22 22 26-6-12-2-24 2-32 3-7 2-16-16-28Z"/>
+        <!-- right waves/sweep under -->
+        <path class="hairDark" d="M146 56c16 10 18 22 14 34-4 10-12 20-22 26 6-12 4-22-2-30-6-8-6-18 10-30Z"/>
+  <!-- bangs across forehead (straight fringe) -->
+  <path class="hair" d="M46 46c6-8 22-16 44-16 22 0 40 8 46 16-2 8-10 16-22 18-10 2-22 4-38 4-18 0-30-4-36-10-4-4-2-8 4-12Z"/>
+  <!-- interior shade under bangs -->
+  <path class="hairDark" d="M60 48c16-8 52-10 76 0-10 8-28 12-50 12-14 0-22-2-28-6 0-2 1-4 2-6Z"/>
+        <!-- glossy highlights -->
+        <path class="hairLight" d="M54 64c6 6 18 8 32 8 18 0 34-4 46-12l2-2c-8-2-20 0-28 2-10 2-20 4-36 4-8 0-12-2-16 0Z"/>
+        <path class="hairLight" d="M44 78c-2 6 0 12 6 18 4 4 10 8 16 10 0-6 0-12 2-16-12-3-18-6-24-12Z"/>
+      </g>
+      <!-- head -->
+      <circle class="skin" cx="90" cy="58" r="46"/>
+      <!-- face -->
+      <circle class="eye" cx="76" cy="60" r="4.2"/>
+      <circle class="eye" cx="104" cy="60" r="4.2"/>
+      <path class="mouth" d="M80 74q10 9 20 0"/>
+      <!-- large top hair bow (red) with glossy highlight and gold clip -->
+      <g id="bowTop">
+        <!-- left wing -->
+        <path class="bow" d="M52 22c8-6 20-10 28-8 4 1 7 3 9 6 3 5 2 10-2 14-6 6-18 9-28 8-6-1-10-3-12-6-3-5-1-10 5-14Z"/>
+        <!-- right wing -->
+        <path class="bow" d="M128 22c-8-6-20-10-28-8-4 1-7 3-9 6-3 5-2 10 2 14 6 6 18 9 28 8 6-1 10-3 12-6 3-5 1-10-5-14Z"/>
+        <!-- center knot -->
+        <ellipse class="bowKnot" cx="90" cy="30" rx="13" ry="10"/>
+        <!-- gold clip hint behind knot -->
+        <path class="metal" d="M78 16c2-4 10-6 12-6s10 2 12 6c2 4-2 8-8 8h-8c-6 0-10-4-8-8Z"/>
+        <!-- glossy highlights -->
+        <ellipse class="shine" cx="70" cy="28" rx="14" ry="6" transform="rotate(-12 70 28)"/>
+        <ellipse class="shine" cx="110" cy="28" rx="14" ry="6" transform="rotate(12 110 28)"/>
+      </g>
+      <!-- neck -->
+      <rect class="skin" x="82" y="86" width="16" height="10" rx="4"/>
+      <!-- torso shirt -->
+      <g id="torso">
+        <rect class="shirt" x="50" y="96" width="80" height="52" rx="12"/>
+        <!-- collar -->
+        <path class="shirtDark" d="M76 96l14 12 14-12c-6-2-22-2-28 0Z"/>
+        <!-- placket & buttons -->
+        <rect class="shirtDark" x="88" y="98" width="4" height="48" rx="2"/>
+        <circle class="shirtDark" cx="90" cy="112" r="2"/>
+        <circle class="shirtDark" cx="90" cy="124" r="2"/>
+        <circle class="shirtDark" cx="90" cy="136" r="2"/>
+        <circle class="shirtDark" cx="90" cy="148" r="2"/>
+      </g>
+      <!-- rounded shoulders to visually connect arms to torso -->
+      <circle class="shirt" cx="50" cy="116" r="10"/>
+      <circle class="shirt" cx="130" cy="116" r="10"/>
+      <!-- belt -->
+      <rect class="belt" x="50" y="146" width="80" height="8" rx="3"/>
+      <rect class="buckle" x="86" y="146" width="8" height="8" rx="2"/>
+    </g>
+
+    <!-- limbs and overlays defined separately to avoid double-draw in animated poses -->
+    <!-- arms with sleeves and hands -->
+    <g id="armL">
+      <rect class="shirt" x="34" y="104" width="20" height="38" rx="9"/>
+      <rect class="cuff" x="34" y="138" width="20" height="6" rx="3"/>
+      <rect class="skin" x="40" y="144" width="12" height="10" rx="6"/>
+    </g>
+    <g id="armR">
+      <rect class="shirt" x="126" y="104" width="20" height="38" rx="9"/>
+      <rect class="cuff" x="126" y="138" width="20" height="6" rx="3"/>
+      <rect class="skin" x="132" y="144" width="12" height="10" rx="6"/>
+    </g>
+    <!-- legs (longer) -->
+    <g id="legL">
+      <rect class="pants" x="68" y="152" width="16" height="42" rx="6"/>
+      <rect class="cuff" x="68" y="194" width="16" height="12" rx="4"/>
+      <ellipse class="sole" cx="76" cy="210" rx="18" ry="6"/>
+      <ellipse class="shoeW" cx="76" cy="206" rx="18" ry="9"/>
+      <path class="lace" d="M66 202h8M74 202h8M70 206h8"/>
+    </g>
+    <g id="legR">
+      <rect class="pants" x="96" y="152" width="16" height="42" rx="6"/>
+      <rect class="cuff" x="96" y="194" width="16" height="12" rx="4"/>
+      <ellipse class="sole" cx="104" cy="210" rx="18" ry="6"/>
+      <ellipse class="shoeW" cx="104" cy="206" rx="18" ry="9"/>
+      <path class="accent" d="M110 196l8 6-6 6-8-4z"/>
+      <path class="lace" d="M94 202h8M102 202h8M98 206h8"/>
+    </g>
+    <!-- overlay above legs to hide seam at waist -->
+    <g id="waistOverlay"><path class="pants" d="M56 150c10-8 26-12 34-12s24 4 34 12l-6 10H62z"/></g>
+
+    <!-- Posed variations -->
+    <g id="idle">
+      <use href="#girlCore"/>
+      <use href="#armL"/>
+      <use href="#armR"/>
+      <use href="#legL"/>
+      <use href="#legR"/>
+      <use href="#waistOverlay"/>
+    </g>
+    <g id="walkL_A">
+      <g transform="translate(0,-2)">
+        <use href="#girlCore"/>
+        <use href="#armL" transform="translate(-12,-6) rotate(-22 44 127)"/>
+        <use href="#armR" transform="translate(12,8) rotate(20 136 127)"/>
+        <use href="#legL" transform="translate(-12,0) rotate(-22 76 188)"/>
+        <use href="#legR" transform="translate(12,0) rotate(18 104 188)"/>
+        <use href="#waistOverlay"/>
+      </g>
+    </g>
+    <g id="walkL_B">
+      <g transform="translate(0,1)">
+        <use href="#girlCore"/>
+        <use href="#armL" transform="translate(8,6) rotate(20 44 127)"/>
+        <use href="#armR" transform="translate(-10,-10) rotate(-24 136 127)"/>
+        <use href="#legL" transform="translate(14,0) rotate(20 76 188)"/>
+        <use href="#legR" transform="translate(-14,0) rotate(-20 104 188)"/>
+        <use href="#waistOverlay"/>
+      </g>
+    </g>
+    <g id="walkR_A">
+      <g transform="translate(0,-2)">
+        <use href="#girlCore"/>
+        <use href="#armL" transform="translate(-12,8) rotate(22 44 127)"/>
+        <use href="#armR" transform="translate(12,-6) rotate(-24 136 127)"/>
+        <use href="#legL" transform="translate(-12,0) rotate(18 76 188)"/>
+        <use href="#legR" transform="translate(12,0) rotate(-22 104 188)"/>
+        <use href="#waistOverlay"/>
+      </g>
+    </g>
+    <g id="walkR_B">
+      <g transform="translate(0,1)">
+        <use href="#girlCore"/>
+        <use href="#armL" transform="translate(8,-10) rotate(-24 44 127)"/>
+        <use href="#armR" transform="translate(-10,6) rotate(20 136 127)"/>
+        <use href="#legL" transform="translate(14,0) rotate(-20 76 188)"/>
+        <use href="#legR" transform="translate(-14,0) rotate(20 104 188)"/>
+        <use href="#waistOverlay"/>
+      </g>
+    </g>
+    <g id="jumpUp">
+      <g transform="translate(0,-6)">
+        <use href="#girlCore"/>
+        <use href="#armL" transform="translate(-12,-22) rotate(-34 44 127)"/>
+        <use href="#armR" transform="translate(12,-22) rotate(34 136 127)"/>
+        <use href="#legL" transform="translate(-6,-12) rotate(-8 76 188)"/>
+        <use href="#legR" transform="translate(6,-12) rotate(8 104 188)"/>
+        <use href="#waistOverlay"/>
+      </g>
+    </g>
+    <g id="jumpL">
+      <g transform="translate(0,-6)">
+        <use href="#girlCore"/>
+        <use href="#armL" transform="translate(-18,-24) rotate(-36 44 127)"/>
+        <use href="#armR" transform="translate(10,-14) rotate(18 136 127)"/>
+        <use href="#legL" transform="translate(-16,-10) rotate(-14 76 188)"/>
+        <use href="#legR" transform="translate(12,-8) rotate(12 104 188)"/>
+        <use href="#waistOverlay"/>
+      </g>
+    </g>
+    <g id="jumpR">
+      <g transform="translate(0,-6)">
+        <use href="#girlCore"/>
+        <use href="#armL" transform="translate(-10,-14) rotate(18 44 127)"/>
+        <use href="#armR" transform="translate(18,-24) rotate(36 136 127)"/>
+        <use href="#legL" transform="translate(-12,-8) rotate(12 76 188)"/>
+        <use href="#legR" transform="translate(16,-10) rotate(-14 104 188)"/>
+        <use href="#waistOverlay"/>
+      </g>
+    </g>
+  </defs>
+
+  <!-- 8 columns x 1 row, each 256x256 cell -->
+  <rect width="2048" height="256" fill="none"/>
+  <g transform="translate(38,16)">
+    <g transform="translate(0,0)"><use href="#idle"/></g>
+    <g transform="translate(256,0)"><use href="#walkL_A"/></g>
+    <g transform="translate(512,0)"><use href="#walkL_B"/></g>
+    <g transform="translate(768,0)"><use href="#walkR_A"/></g>
+    <g transform="translate(1024,0)"><use href="#walkR_B"/></g>
+    <g transform="translate(1280,0)"><use href="#jumpUp"/></g>
+    <g transform="translate(1536,0)"><use href="#jumpL"/></g>
+    <g transform="translate(1792,0)"><use href="#jumpR"/></g>
+  </g>
+</svg>

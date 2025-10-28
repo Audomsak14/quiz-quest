@@ -175,6 +175,119 @@ app.get("/api/game/room/:roomId", async (req, res) => {
   }
 });
 
+// Get game history for a player (by playerId preferred, name fallback)
+// Query: ?playerId=<id>&name=<playerName>&limit=50
+app.get("/api/game/history", async (req, res) => {
+  try {
+    const playerIdQ = (req.query.playerId || "").trim();
+    const name = (req.query.name || "").trim();
+    const limit = Math.min(200, Math.max(1, parseInt(req.query.limit || '50', 10)));
+    if (!playerIdQ && !name) {
+      return res.status(400).json({ error: "Missing playerId or name" });
+    }
+
+    // Fetch rooms that contain this player's completed records (by id first, else by name)
+    const filter = playerIdQ
+      ? { "gameData.completedPlayers.playerId": playerIdQ }
+      : { "gameData.completedPlayers.playerName": name };
+  const rooms = await Room.find(filter).populate('questionSetId').lean();
+
+    // Flatten attempts
+    const attempts = [];
+    // Precompute per-room rankings for quick lookup
+    const perRoomRanks = new Map(); // roomId -> { key -> rank, total }
+    for (const room of rooms) {
+      const allEntries = Array.isArray(room.gameData?.completedPlayers) ? room.gameData.completedPlayers : [];
+
+      // Build ranks for this room once
+      if (!perRoomRanks.has(String(room._id))) {
+        const sorted = allEntries.slice().sort((a, b) => {
+          if ((a.finalScore ?? 0) !== (b.finalScore ?? 0)) return (b.finalScore ?? 0) - (a.finalScore ?? 0);
+          return (a.completionTime ?? Infinity) - (b.completionTime ?? Infinity);
+        });
+        const rankMap = new Map();
+        sorted.forEach((e, idx) => {
+          const key = `${e.playerId || e.playerName || 'anon'}@${new Date(e.timestamp || 0).getTime()}`;
+          rankMap.set(key, idx + 1);
+        });
+        perRoomRanks.set(String(room._id), { rankMap, total: sorted.length });
+      }
+
+      const entries = allEntries.filter(p => playerIdQ ? (p.playerId === playerIdQ) : (p.playerName === name));
+      const qsArr = Array.isArray(room?.questionSetId?.questions) ? room.questionSetId.questions : null;
+      const questionsTotal = qsArr ? qsArr.length : undefined;
+      const maxPoints = qsArr ? qsArr.reduce((s, q) => s + (typeof q.points === 'number' ? q.points : 100), 0) : null;
+      for (const e of entries) {
+        const key = `${(e.playerId || e.playerName || 'anon')}@${new Date(e.timestamp || 0).getTime()}`;
+        const rankInfo = perRoomRanks.get(String(room._id));
+        attempts.push({
+          roomId: String(room._id),
+          roomName: room.name || 'ห้องไม่ทราบชื่อ',
+          roomCode: room.roomCode || room.code,
+          questionSetId: room.questionSetId?._id ? String(room.questionSetId._id) : undefined,
+          questionSetTitle: room.questionSetId?.title || 'ไม่ทราบชุดข้อสอบ',
+          finalScore: e.finalScore ?? 0,
+          completionTime: e.completionTime ?? null,
+          questionsAnswered: e.questionsAnswered ?? null,
+          questionsTotal: Number.isInteger(questionsTotal) ? questionsTotal : null,
+          maxPoints: Number.isFinite(maxPoints) ? maxPoints : null,
+          rank: rankInfo?.rankMap?.get(key) || null,
+          totalPlayers: rankInfo?.total || null,
+          correctCount: typeof e.correctCount === 'number' ? e.correctCount : null,
+          answers: Array.isArray(e.answers) ? e.answers.map(a => ({
+            questionId: a.questionId || null,
+            selectedIndex: typeof a.selectedIndex === 'number' ? a.selectedIndex : null,
+            correct: !!a.correct,
+            earned: typeof a.earned === 'number' ? a.earned : null,
+            timestamp: a.timestamp ? new Date(a.timestamp).getTime() : null
+          })) : [],
+          partial: !!e.partial,
+          timestamp: e.timestamp ? new Date(e.timestamp).getTime() : null
+        });
+      }
+    }
+
+    // Sort newest first and clamp to limit
+    attempts.sort((a,b) => (b.timestamp||0) - (a.timestamp||0));
+    const sliced = attempts.slice(0, limit);
+
+    // Summaries
+    const totalAttempts = attempts.length;
+    const uniqueRooms = new Set(attempts.map(a => a.roomId));
+    const totalTests = uniqueRooms.size;
+    const avg = totalAttempts ? (attempts.reduce((s,a)=>s+(a.finalScore||0),0)/totalAttempts) : 0;
+    const best = attempts.reduce((m,a)=> Math.max(m, a.finalScore||0), 0);
+
+    // Per-room aggregation
+    const perRoom = {};
+    for (const a of attempts) {
+      if (!perRoom[a.roomId]) {
+        perRoom[a.roomId] = { roomId: a.roomId, roomName: a.roomName, questionSetTitle: a.questionSetTitle, attempts: 0, bestScore: 0, latestAt: 0 };
+      }
+      perRoom[a.roomId].attempts += 1;
+      perRoom[a.roomId].bestScore = Math.max(perRoom[a.roomId].bestScore, a.finalScore||0);
+      perRoom[a.roomId].latestAt = Math.max(perRoom[a.roomId].latestAt, a.timestamp||0);
+    }
+
+    res.json({
+      success: true,
+      playerName: name || null,
+      playerId: playerIdQ || null,
+      summary: {
+        totalTests,
+        totalAttempts,
+        averageScore: Math.round(avg * 10) / 10,
+        bestScore: best
+      },
+      attempts: sliced,
+      perRoom: Object.values(perRoom).sort((a,b)=> (b.latestAt||0) - (a.latestAt||0))
+    });
+  } catch (error) {
+    console.error("Error fetching history:", error);
+    res.status(500).json({ error: "Failed to fetch history" });
+  }
+});
+
 // Initialize Socket.IO
 io = new SocketIOServer(httpServer, {
   cors: {
@@ -186,6 +299,7 @@ io = new SocketIOServer(httpServer, {
 // In-memory live room state (lightweight realtime layer)
 // roomsLive: roomId -> {
 //   players: Map<playerId, { name, x, y, role, socketId }>,
+//   answers: Map<playerId, Array<{questionId, selectedIndex, correct, earned, timestamp}>>,
 //   startedAt?: number,
 //   competition?: boolean,
 //   kicked?: Map<playerId, number> // until timestamp ms when player can rejoin
@@ -204,11 +318,13 @@ io.on("connection", (socket) => {
     // Ensure in-memory room exists before any DB ops so we can always respond
     let room = roomsLive.get(roomId);
     if (!room) {
-      room = { players: new Map(), kicked: new Map() };
+      room = { players: new Map(), answers: new Map(), kicked: new Map() };
       roomsLive.set(roomId, room);
     }
     // Ensure kicked map exists
     if (!room.kicked) room.kicked = new Map();
+    // Ensure answers map exists
+    if (!room.answers) room.answers = new Map();
 
     // If player was recently kicked, block join for a short period
     try {
@@ -402,6 +518,53 @@ io.on("connection", (socket) => {
     }
   });
 
+  // When a player finishes manually (not necessarily all questions), persist a partial snapshot
+  socket.on("playerFinished", async ({ roomId, playerId, score, timestamp } = {}) => {
+    try {
+      if (!roomId || !playerId) return;
+      const room = roomsLive.get(roomId);
+      const answersArr = Array.isArray(room?.answers?.get(playerId)) ? room.answers.get(playerId) : [];
+      const correctCount = answersArr.filter(a => a && a.correct === true).length;
+      const finalScore = Number.isFinite(score) ? score : answersArr.reduce((s, a) => s + (Number(a.earned) || 0), 0);
+      let totalQuestions = null;
+      try {
+        const roomDoc = await Room.findById(roomId).populate('questionSetId');
+        if (roomDoc?.questionSetId?.questions) totalQuestions = roomDoc.questionSetId.questions.length;
+      } catch {}
+      const startedAt = roomsLive.get(roomId)?.startedAt;
+      const nowTs = timestamp || Date.now();
+      const serverElapsed = typeof startedAt === 'number' ? Math.max(0, nowTs - startedAt) : null;
+
+      await Room.findByIdAndUpdate(
+        roomId,
+        {
+          $addToSet: {
+            "gameData.completedPlayers": {
+              playerId,
+              playerName: roomsLive.get(roomId)?.players?.get(playerId)?.name || 'Player',
+              partial: true,
+              finalScore,
+              completionTime: serverElapsed,
+              questionsAnswered: answersArr.length,
+              correctCount,
+              totalQuestions: Number.isInteger(totalQuestions) ? totalQuestions : null,
+              answers: answersArr.map(a => ({
+                questionId: String(a.questionId || ''),
+                selectedIndex: typeof a.selectedIndex === 'number' ? a.selectedIndex : null,
+                correct: !!a.correct,
+                earned: typeof a.earned === 'number' ? a.earned : null,
+                timestamp: a.timestamp ? new Date(a.timestamp) : new Date()
+              })),
+              timestamp: new Date(nowTs)
+            }
+          }
+        }
+      );
+    } catch (err) {
+      console.warn('playerFinished snapshot failed:', err.message);
+    }
+  });
+
   // Allow teacher to toggle competition mode for a room (students compete, teacher watches)
   socket.on('setCompetition', ({ roomId, enabled } = {}) => {
     if (!roomId) return;
@@ -415,7 +578,18 @@ io.on("connection", (socket) => {
   // quiz events passthrough
   socket.on("sendAnswer", (payload = {}) => {
     if (!payload.roomId) return;
+    // Relay to others
     socket.to(payload.roomId).emit("answerSubmitted", payload);
+    try {
+      const { roomId, playerId, questionId, selectedIndex, correct, earned, timestamp } = payload;
+      if (!roomId || !playerId) return;
+      const room = roomsLive.get(roomId) || null;
+      if (!room) return;
+      if (!room.answers) room.answers = new Map();
+      const arr = room.answers.get(playerId) || [];
+      arr.push({ questionId, selectedIndex, correct: !!correct, earned: Number(earned) || 0, timestamp: timestamp ? new Date(timestamp).getTime() : Date.now() });
+      room.answers.set(playerId, arr);
+    } catch { /* noop */ }
   });
   socket.on("nextQuestion", (payload = {}) => {
     if (!payload.roomId) return;
@@ -444,12 +618,35 @@ io.on("connection", (socket) => {
         gameResults.set(roomId, []);
       }
       
+      // Gather per-question answers if tracked
+      const answersArr = Array.isArray(roomsLive.get(roomId)?.answers?.get(playerId))
+        ? roomsLive.get(roomId).answers.get(playerId)
+        : [];
+      const correctCount = answersArr.filter(a => a && a.correct === true).length;
+
+      // Try to get total questions from DB
+      let totalQuestions = null;
+      try {
+        const roomDoc = await Room.findById(roomId).populate('questionSetId');
+        if (roomDoc?.questionSetId?.questions) totalQuestions = roomDoc.questionSetId.questions.length;
+      } catch { /* noop */ }
+
       const result = {
         playerId,
         playerName,
+        partial: false,
         finalScore,
         completionTime: serverElapsed,
         questionsAnswered,
+        correctCount: Number.isFinite(correctCount) ? correctCount : null,
+        totalQuestions: Number.isInteger(totalQuestions) ? totalQuestions : null,
+        answers: answersArr.map(a => ({
+          questionId: String(a.questionId || ''),
+          selectedIndex: typeof a.selectedIndex === 'number' ? a.selectedIndex : null,
+          correct: !!a.correct,
+          earned: typeof a.earned === 'number' ? a.earned : null,
+          timestamp: a.timestamp ? new Date(a.timestamp) : new Date()
+        })),
         timestamp: timestamp || Date.now()
       };
       
@@ -463,9 +660,13 @@ io.on("connection", (socket) => {
             "gameData.completedPlayers": {
               playerId,
               playerName,
+              partial: false,
               finalScore,
               completionTime: serverElapsed,
               questionsAnswered,
+              correctCount: Number.isFinite(correctCount) ? correctCount : null,
+              totalQuestions: Number.isInteger(totalQuestions) ? totalQuestions : null,
+              answers: result.answers,
               timestamp: new Date(result.timestamp)
             }
           },
@@ -510,6 +711,53 @@ io.on("connection", (socket) => {
 
     } catch (error) {
       console.error("Error handling game completion:", error);
+    }
+  });
+
+  // Persist a partial attempt snapshot on disconnect if student answered anything
+  socket.on('disconnect', async () => {
+    try {
+      const roomId = socket.data?.roomId;
+      const playerId = socket.data?.playerId;
+      const role = socket.data?.role;
+      if (!roomId || !playerId || role === 'teacher') return;
+      const room = roomsLive.get(roomId);
+      const answersArr = Array.isArray(room?.answers?.get(playerId)) ? room.answers.get(playerId) : [];
+      if (!answersArr.length) return; // nothing to save
+      const correctCount = answersArr.filter(a => a && a.correct === true).length;
+      const finalScore = answersArr.reduce((s, a) => s + (Number(a.earned) || 0), 0);
+      let totalQuestions = null;
+      try {
+        const roomDoc = await Room.findById(roomId).populate('questionSetId');
+        if (roomDoc?.questionSetId?.questions) totalQuestions = roomDoc.questionSetId.questions.length;
+      } catch {}
+      const startedAt = roomsLive.get(roomId)?.startedAt;
+      const nowTs = Date.now();
+      const serverElapsed = typeof startedAt === 'number' ? Math.max(0, nowTs - startedAt) : null;
+      await Room.findByIdAndUpdate(roomId, {
+        $addToSet: {
+          "gameData.completedPlayers": {
+            playerId,
+            playerName: roomsLive.get(roomId)?.players?.get(playerId)?.name || 'Player',
+            partial: true,
+            finalScore,
+            completionTime: serverElapsed,
+            questionsAnswered: answersArr.length,
+            correctCount,
+            totalQuestions: Number.isInteger(totalQuestions) ? totalQuestions : null,
+            answers: answersArr.map(a => ({
+              questionId: String(a.questionId || ''),
+              selectedIndex: typeof a.selectedIndex === 'number' ? a.selectedIndex : null,
+              correct: !!a.correct,
+              earned: typeof a.earned === 'number' ? a.earned : null,
+              timestamp: a.timestamp ? new Date(a.timestamp) : new Date()
+            })),
+            timestamp: new Date(nowTs)
+          }
+        }
+      });
+    } catch (e) {
+      console.warn('disconnect snapshot failed:', e.message);
     }
   });
 
@@ -644,4 +892,34 @@ app.post('/api/rooms/:roomId/kick-all', requireAuth, async (req, res) => {
 
 httpServer.listen(PORT, () => {
   console.log(`🚀 Server running on http://localhost:${PORT}`);
+});
+
+// Delete history for a player
+// DELETE /api/game/history?playerId=... [optional: roomId=..., ts=epoch_ms]
+app.delete("/api/game/history", async (req, res) => {
+  try {
+    const playerId = (req.query.playerId || '').trim();
+    const roomId = (req.query.roomId || '').trim();
+    const ts = req.query.ts ? new Date(Number(req.query.ts)) : null;
+    if (!playerId) return res.status(400).json({ error: 'Missing playerId' });
+
+    if (roomId && ts && !isNaN(ts.getTime())) {
+      // Delete a specific attempt in one room by exact timestamp
+      const r = await Room.updateOne(
+        { _id: roomId },
+        { $pull: { 'gameData.completedPlayers': { playerId, timestamp: ts } } }
+      );
+      return res.json({ success: true, deleted: r.modifiedCount || 0 });
+    }
+
+    // Delete all attempts for this player across all rooms
+    const r = await Room.updateMany(
+      { 'gameData.completedPlayers.playerId': playerId },
+      { $pull: { 'gameData.completedPlayers': { playerId } } }
+    );
+    res.json({ success: true, deletedRooms: r.modifiedCount || 0 });
+  } catch (e) {
+    console.error('Error deleting history:', e);
+    res.status(500).json({ error: 'Failed to delete history' });
+  }
 });

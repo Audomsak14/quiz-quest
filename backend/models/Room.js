@@ -27,9 +27,20 @@ const RoomSchema = new mongoose.Schema({
     completedPlayers: [{
       playerId: String,
       playerName: String,
+      partial: { type: Boolean, default: false },
       finalScore: Number,
       completionTime: Number,
       questionsAnswered: Number,
+      // Optional detail fields for richer history
+      correctCount: Number,
+      totalQuestions: Number,
+      answers: [{
+        questionId: String,
+        selectedIndex: Number,
+        correct: Boolean,
+        earned: Number,
+        timestamp: Date
+      }],
       timestamp: Date
     }]
   }

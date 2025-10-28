@@ -33,8 +33,13 @@ export default function StudentDashboard() {
         setPlayerName("นักเรียน");
       }
 
-      // โหลดชื่อตัวละคร
-      if (characterName) {
+      // โหลดชื่อตัวละคร: ถ้าเลือกแบบเพศ ให้แสดง "ตัวละครชาย/หญิง" แทนค่าดั้งเดิม
+      const id = characterId;
+      if (id === 'male') {
+        setSelectedCharacterName('ตัวละครชาย');
+      } else if (id === 'female') {
+        setSelectedCharacterName('ตัวละครหญิง');
+      } else if (characterName) {
         setSelectedCharacterName(characterName);
       } else {
         setSelectedCharacterName("นักเรียน");
@@ -73,14 +78,14 @@ export default function StudentDashboard() {
         setCharacterImage(null);
       }
 
-      // กำหนด emoji ตามตัวละครที่เลือก
-      if (characterId) {
-        const characters = [
-          "🗡️", "🔮", "🏹", "🧙‍♂️", "🥷", "⚔️", 
-          "👊", "🔪", "🙏", "🌿", "⚡", "🎵"
-        ];
+      // กำหนด emoji ตามตัวละครที่เลือก (รองรับ male/female)
+      if (id === 'male') {
+        setSelectedCharacterEmoji('👦');
+      } else if (id === 'female') {
+        setSelectedCharacterEmoji('👧');
+      } else if (characterId) {
+        const characters = ["🗡️","🔮","🏹","🧙‍♂️","🥷","⚔️","👊","🔪","🙏","🌿","⚡","🎵"];
         const emoji = characters[parseInt(characterId)] || "👨‍🎓";
-        console.log("Setting emoji:", emoji);
         setSelectedCharacterEmoji(emoji);
       } else {
         setSelectedCharacterEmoji("👨‍🎓");
@@ -193,32 +198,203 @@ export default function StudentDashboard() {
     router.push('/StudentDashboard/gameroom');
   };
 
-  // Component สำหรับแสดงรูปตัวละคร - แก้ไขให้รองรับการแสดงรูปภาพ
-  const CharacterAvatar = ({ size = "w-16 h-16" }) => {
+  // Component สำหรับแสดงรูปตัวละคร (ปรับดีไซน์ให้สวยและคมขึ้น พร้อมวงแหวนกราเดียนท์)
+  const CharacterAvatar = ({ size = "w-16 h-16", showGlow = true, className = "" }) => {
     const [imageError, setImageError] = useState(false);
+    const [usedCanvas, setUsedCanvas] = useState(false);
+    const [frameUrl, setFrameUrl] = useState("");
+
+    // Extract a single standing frame from sprite sheets so the avatar matches the full-body preview
+    useEffect(() => {
+      setUsedCanvas(false);
+      setFrameUrl("");
+      if (!characterImage) { setImageError(true); return; }
+      const img = new Image();
+      img.onload = () => {
+        try {
+          const nW = img.naturalWidth || img.width || 0;
+          const nH = img.naturalHeight || img.height || 0;
+          // Robust sprite detection: treat wide images as 1-row strips; choose closest between 8 or 6 columns.
+          let cols = 1, rows = 1;
+          const aspect = nH > 0 ? (nW / nH) : 0;
+          if (aspect >= 4) {
+            const diff8 = Math.abs(aspect - 8);
+            const diff6 = Math.abs(aspect - 6);
+            cols = diff8 <= diff6 ? 8 : 6; rows = 1;
+          } else if (aspect >= 2 && aspect < 4) {
+            // Possibly 2 rows stacked
+            const arPerRow = aspect * 2;
+            const diff8 = Math.abs(arPerRow - 8);
+            const diff6 = Math.abs(arPerRow - 6);
+            cols = diff8 <= diff6 ? 8 : 6; rows = 2;
+          }
+
+          if (cols === 1 && rows === 1) { setUsedCanvas(false); return; } // not a grid -> use <img>
+
+          // Use offscreen canvas so we don't depend on a DOM canvas element
+          const canvas = document.createElement('canvas');
+          // Pick a neutral standing frame from first row; prefer the 4th image if 8 cols
+          const sW = Math.floor(nW / cols) || nW;
+          const sH = Math.floor(nH / rows) || nH;
+          let col = 0;
+          if (cols >= 8) col = 3; // 4th (1-based)
+          else if (cols === 6) col = 2; // 3rd (1-based)
+          else col = Math.max(0, Math.min(cols - 1, Math.floor(cols / 2)));
+          const sx = col * sW; const sy = 0;
+          // Square canvas to fit circular mask nicely
+          const CW = 256; const CH = 256;
+          canvas.width = CW; canvas.height = CH;
+          const ctx = canvas.getContext('2d');
+          ctx.clearRect(0,0,CW,CH);
+          const pad = 8;
+          // Fit entire character inside the square while keeping full-body visible
+          const scale = Math.min((CW - pad*2) / sW, (CH - pad*2) / sH);
+          const w = Math.round(sW * scale); const h = Math.round(sH * scale);
+          const x = Math.round((CW - w) / 2); const y = Math.round((CH - h) / 2);
+          ctx.imageSmoothingEnabled = true; ctx.imageSmoothingQuality = 'high';
+          ctx.drawImage(img, sx, sy, sW, sH, x, y, w, h);
+          try { setFrameUrl(canvas.toDataURL('image/png')); } catch {}
+          setUsedCanvas(true);
+        } catch {
+          setUsedCanvas(false);
+        }
+      };
+      img.onerror = () => setImageError(true);
+      img.src = characterImage;
+    }, [characterImage]);
 
     return (
-      <div className={`${size} bg-gradient-to-br from-purple-400 to-pink-500 rounded-full flex items-center justify-center shadow-lg overflow-hidden`}>
-        {characterImage && !imageError ? (
-          <img
-            src={characterImage}
-            alt={selectedCharacterName}
-            className="w-full h-full object-cover"
-            onError={() => {
-              console.log("Image failed to load:", characterImage);
-              setImageError(true);
-            }}
-            onLoad={() => {
-              console.log("Image loaded successfully:", characterImage);
+      <div className={`relative ${size} ${className}`}>
+        {showGlow && (
+          <div
+            className="absolute -inset-1 rounded-full animate-spin"
+            style={{
+              background: 'conic-gradient(#a78bfa, #ec4899, #60a5fa, #a78bfa)',
+              filter: 'blur(8px)',
+              opacity: 0.6,
+              animationDuration: '6s'
             }}
           />
-        ) : (
-          <div className="flex items-center justify-center w-full h-full">
-            <span className="text-2xl" style={{ fontSize: size.includes('w-20') ? '2rem' : '1.5rem' }}>
-              {selectedCharacterEmoji}
-            </span>
-          </div>
         )}
+        <div className="relative w-full h-full rounded-full p-[3px] bg-gradient-to-br from-purple-400 to-pink-500 shadow-xl">
+          <div className="relative w-full h-full rounded-full overflow-hidden border border-white/30 bg-black/30 backdrop-blur-[2px]">
+            {usedCanvas && frameUrl ? (
+              <img src={frameUrl} alt={selectedCharacterName} className="w-full h-full object-cover" />
+            ) : characterImage && !imageError ? (
+              <img
+                src={characterImage}
+                alt={selectedCharacterName}
+                className="w-full h-full object-cover"
+                onError={() => setImageError(true)}
+              />
+            ) : (
+              <div className="flex items-center justify-center w-full h-full select-none">
+                <span className="text-2xl md:text-3xl">
+                  {selectedCharacterEmoji}
+                </span>
+              </div>
+            )}
+            {/* glossy overlay */}
+            <div className="pointer-events-none absolute inset-0 rounded-full bg-gradient-to-tr from-white/20 via-transparent to-transparent" />
+          </div>
+        </div>
+      </div>
+    );
+  };
+
+  // พรีวิวตัวละครแบบเต็มตัว (สัดส่วนแนวตั้ง เห็นทั้งตัว ไม่ครอป)
+  const FullCharacterPreview = ({ widthClass = "w-28", heightClass = "h-44", className = "", standCol = 'center' }) => {
+    const [imageError, setImageError] = useState(false);
+    const [usedCanvas, setUsedCanvas] = useState(false);
+    const [frameUrl, setFrameUrl] = useState("");
+
+    useEffect(() => {
+      setUsedCanvas(false);
+      setFrameUrl("");
+      if (!characterImage) { setImageError(true); return; }
+      const img = new Image();
+      img.onload = () => {
+        try {
+          const nW = img.naturalWidth || img.width || 0;
+          const nH = img.naturalHeight || img.height || 0;
+          // Robust sprite detection: filename hints first, then aspect/size heuristics
+          let cols = 1, rows = 1;
+          const srcLower = String(characterImage).toLowerCase();
+          if (srcLower.includes('8x1')) { cols = 8; rows = 1; }
+          else if (srcLower.includes('6x1')) { cols = 6; rows = 1; }
+          else if (srcLower.includes('8x2')) { cols = 8; rows = 2; }
+          else if (srcLower.includes('6x2')) { cols = 6; rows = 2; }
+          else if (srcLower.includes('sprite')) { cols = 8; rows = 1; }
+
+          if (cols === 1 && rows === 1 && nW > 0 && nH > 0) {
+            const aspect = nW / nH;
+            if (aspect >= 4) {
+              const diff8 = Math.abs(aspect - 8);
+              const diff6 = Math.abs(aspect - 6);
+              cols = diff8 <= diff6 ? 8 : 6; rows = 1;
+            } else if (aspect >= 2 && aspect < 4) {
+              const arPerRow = aspect * 2;
+              const diff8 = Math.abs(arPerRow - 8);
+              const diff6 = Math.abs(arPerRow - 6);
+              cols = diff8 <= diff6 ? 8 : 6; rows = 2;
+            }
+          }
+
+          if (cols === 1 && rows === 1) { setUsedCanvas(false); return; } // not a grid -> let <img> render
+
+          // Use offscreen canvas to generate a single-frame image URL
+          const canvas = document.createElement('canvas');
+          // Choose first frame (standing) from first row
+          const sW = Math.floor(nW / cols) || nW;
+          const sH = Math.floor(nH / rows) || nH;
+          // Pick a neutral standing frame; prefer the 4th image for 8 cols
+          let col = 0;
+          if (typeof standCol === 'number') col = Math.max(0, Math.min(cols - 1, Math.floor(standCol)));
+          else if (cols >= 8) col = 3; else if (cols === 6) col = 2; else col = Math.max(0, Math.min(cols - 1, Math.floor(cols / 2)));
+          const sx = col * sW; const sy = 0;
+          // High-res internal size for crisp downscale
+          const CW = 256; const CH = 384;
+          canvas.width = CW; canvas.height = CH;
+          const ctx = canvas.getContext('2d');
+          ctx.clearRect(0,0,CW,CH);
+          const pad = 10;
+          const scale = Math.min((CW - pad*2) / sW, (CH - pad*2) / sH);
+          const w = Math.round(sW * scale); const h = Math.round(sH * scale);
+          const x = Math.round((CW - w) / 2); const y = Math.round((CH - h) / 2);
+          ctx.imageSmoothingEnabled = true; ctx.imageSmoothingQuality = 'high';
+          ctx.drawImage(img, sx, sy, sW, sH, x, y, w, h);
+          try { setFrameUrl(canvas.toDataURL('image/png')); } catch {}
+          setUsedCanvas(true);
+        } catch {
+          setUsedCanvas(false);
+        }
+      };
+      img.onerror = () => setImageError(true);
+      img.src = characterImage;
+    }, [characterImage, standCol]);
+
+    return (
+      <div className={`relative ${widthClass} ${heightClass} ${className}`}>
+        <div className="absolute -inset-[2px] rounded-2xl" style={{
+          background: 'linear-gradient(135deg, rgba(167,139,250,0.8), rgba(236,72,153,0.8))'
+        }} />
+        <div className="relative w-full h-full rounded-2xl bg-white/5 border border-white/20 overflow-hidden backdrop-blur-sm flex items-center justify-center">
+          {usedCanvas && frameUrl ? (
+            <img src={frameUrl} alt={selectedCharacterName} className="w-full h-full object-contain p-2" />
+          ) : characterImage && !imageError ? (
+            <img
+              src={characterImage}
+              alt={selectedCharacterName}
+              className="w-full h-full object-contain p-2"
+              onError={() => setImageError(true)}
+            />
+          ) : (
+            <div className="flex items-center justify-center w-full h-full">
+              <span className="text-5xl select-none">{selectedCharacterEmoji}</span>
+            </div>
+          )}
+          <div className="pointer-events-none absolute inset-x-0 top-0 h-1/3 bg-gradient-to-b from-white/10 to-transparent" />
+        </div>
       </div>
     );
   };
@@ -241,28 +417,33 @@ export default function StudentDashboard() {
       </div>
 
       {/* Header */}
-      <div className="relative bg-gradient-to-br from-pink-500/10 via-purple-500/10 to-blue-500/10 backdrop-blur-xl rounded-2xl shadow-2xl p-6 mb-6 border border-white/20">
+      <div className="relative bg-white/5 backdrop-blur-xl rounded-2xl shadow-2xl p-6 md:p-8 mb-8 border border-white/10">
         <div className="flex justify-between items-center">
-          <div className="flex items-center space-x-4">
-            <CharacterAvatar />
+          <div className="flex items-center gap-4">
+            <div className="hidden sm:flex items-center justify-center w-12 h-12 rounded-xl bg-gradient-to-br from-fuchsia-500/70 to-violet-500/70 border border-white/20 shadow-md">
+              <span className="text-2xl">🎓</span>
+            </div>
             <div>
-              <h1 className="text-3xl font-bold text-white mb-1 drop-shadow-lg">แดชบอร์ดนักเรียน</h1>
-              <p className="text-pink-200 font-medium">ยินดีต้อนรับ {playerName}</p>
-              <p className="text-blue-200 text-sm">ตัวละคร: {selectedCharacterName}</p>
+              <h1 className="text-3xl md:text-4xl font-extrabold tracking-tight text-white mb-1 drop-shadow">แดชบอร์ดนักเรียน</h1>
+              <div className="flex flex-col md:flex-row md:items-center md:gap-3">
+                <p className="text-pink-200 font-medium">ยินดีต้อนรับ {playerName}</p>
+                <p className="text-blue-200 text-sm">ตัวละคร: {selectedCharacterName}</p>
+              </div>
             </div>
           </div>
           <button
             onClick={handleLogout}
-            className="bg-gradient-to-r from-red-500 to-pink-500 hover:from-red-600 hover:to-pink-600 text-white font-semibold py-3 px-8 rounded-xl transition-all duration-300 shadow-lg hover:shadow-xl transform hover:scale-105 border border-white/20"
+            className="bg-gradient-to-r from-red-500 to-pink-500 hover:from-red-600 hover:to-pink-600 text-white font-semibold py-3 px-6 md:px-8 rounded-xl transition-all duration-300 shadow-lg hover:shadow-xl border border-white/20"
           >
             🚪 ออกจากระบบ
           </button>
         </div>
+        <div className="mt-4 h-px w-full bg-gradient-to-r from-transparent via-white/20 to-transparent" />
       </div>
 
-      {/* Debug Info */}
-      <div className="relative bg-pink-500/10 border border-pink-400/30 text-pink-200 px-4 py-3 rounded-xl mb-6 backdrop-blur-sm">
-        <p className="text-sm">
+      {/* Debug Info (hidden for cleaner UI) */}
+      <div className="hidden">
+        <p>
           Debug: Player = {playerName} | Character = {selectedCharacterName} ({selectedCharacterEmoji}) | 
           Image: {characterImage ? 'Custom' : 'Default'} | 
           local/session: {typeof window !== 'undefined' ? (sessionStorage.getItem('playerName') || localStorage.getItem('playerName') || 'none') : 'not available'}
@@ -270,9 +451,9 @@ export default function StudentDashboard() {
       </div>
 
       {/* Main Content Cards */}
-      <div className="relative grid md:grid-cols-3 gap-6 mb-8">
+      <div className="relative grid md:grid-cols-3 gap-6 mb-10">
         {/* แบบทดสอบ */}
-        <div className="bg-gradient-to-br from-blue-500/10 via-purple-500/10 to-pink-500/10 backdrop-blur-xl rounded-2xl shadow-2xl p-8 text-center hover:scale-105 transition-all duration-300 border border-white/20 group">
+        <div className="bg-white/5 backdrop-blur-xl rounded-2xl shadow-2xl p-8 text-center transition-all duration-300 border border-white/10 group hover:shadow-[0_20px_60px_rgba(0,0,0,0.35)] hover:-translate-y-1">
           <div className="w-20 h-20 bg-gradient-to-br from-blue-400 to-purple-600 rounded-full flex items-center justify-center mx-auto mb-4 shadow-lg group-hover:shadow-xl transition-all duration-300">
             <svg className="w-10 h-10 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
@@ -282,14 +463,14 @@ export default function StudentDashboard() {
           <p className="text-blue-200 mb-4">เข้าร่วมแบบทดสอบออนไลน์</p>
           <button 
             onClick={() => router.push('/StudentDashboard/gameroom')}
-            className="bg-gradient-to-r from-blue-500 to-purple-600 hover:from-blue-600 hover:to-purple-700 text-white font-semibold py-3 px-6 rounded-xl shadow-lg hover:shadow-xl transition-all duration-300 transform hover:scale-105 border border-white/20"
+            className="bg-gradient-to-r from-blue-500 to-purple-600 hover:from-blue-600 hover:to-purple-700 text-white font-semibold py-3 px-6 rounded-xl shadow-lg hover:shadow-xl transition-all duration-300 border border-white/20"
           >
             เข้าร่วมแบบทดสอบ
           </button>
         </div>
 
         {/* ผลคะแนน */}
-        <div className="bg-gradient-to-br from-purple-500/10 via-pink-500/10 to-red-500/10 backdrop-blur-xl rounded-2xl shadow-2xl p-8 text-center hover:scale-105 transition-all duration-300 border border-white/20 group">
+        <div className="bg-white/5 backdrop-blur-xl rounded-2xl shadow-2xl p-8 text-center transition-all duration-300 border border-white/10 group hover:shadow-[0_20px_60px_rgba(0,0,0,0.35)] hover:-translate-y-1">
           <div className="w-20 h-20 bg-gradient-to-br from-purple-400 to-pink-600 rounded-full flex items-center justify-center mx-auto mb-4 shadow-lg group-hover:shadow-xl transition-all duration-300">
             <svg className="w-10 h-10 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
@@ -299,23 +480,21 @@ export default function StudentDashboard() {
           <p className="text-pink-200 mb-4">ดูผลคะแนนการทดสอบ</p>
           <button 
             onClick={() => router.push('/StudentDashboard/scores')}
-            className="bg-gradient-to-r from-pink-500 to-purple-600 hover:from-pink-600 hover:to-purple-700 text-white font-semibold py-3 px-6 rounded-xl shadow-lg hover:shadow-xl transition-all duration-300 transform hover:scale-105 border border-white/20"
+            className="bg-gradient-to-r from-pink-500 to-purple-600 hover:from-pink-600 hover:to-purple-700 text-white font-semibold py-3 px-6 rounded-xl shadow-lg hover:shadow-xl transition-all duration-300 border border-white/20"
           >
             ดูผลคะแนน
           </button>
         </div>
 
         {/* เลือกตัวละคร */}
-        <div className="bg-gradient-to-br from-pink-500/10 via-red-500/10 to-orange-500/10 backdrop-blur-xl rounded-2xl shadow-2xl p-8 text-center hover:scale-105 transition-all duration-300 border border-white/20 group">
-          <div className="w-20 h-20 bg-gradient-to-br from-pink-400 to-red-500 rounded-full flex items-center justify-center mx-auto mb-4 shadow-lg overflow-hidden group-hover:shadow-xl transition-all duration-300">
-            <CharacterAvatar size="w-full h-full" />
-          </div>
+        <div className="bg-white/5 backdrop-blur-xl rounded-2xl shadow-2xl p-8 text-center transition-all duration-300 border border-white/10 group hover:shadow-[0_20px_60px_rgba(0,0,0,0.35)] hover:-translate-y-1">
+          <FullCharacterPreview className="mx-auto mb-4" />
           <h2 className="text-2xl font-bold text-white mb-2 drop-shadow-lg">เลือกตัวละคร</h2>
           <p className="text-pink-200 mb-2">จัดการตัวละครของคุณ</p>
           <p className="text-pink-300 text-sm mb-4">ปัจจุบัน: {selectedCharacterName}</p>
           <button 
             onClick={handleCharacterSelection}
-            className="bg-gradient-to-r from-red-400 to-pink-500 hover:from-red-500 hover:to-pink-600 text-white font-semibold py-3 px-6 rounded-xl shadow-lg hover:shadow-xl transition-all duration-300 transform hover:scale-105 border border-white/20"
+            className="bg-gradient-to-r from-red-400 to-pink-500 hover:from-red-500 hover:to-pink-600 text-white font-semibold py-3 px-6 rounded-xl shadow-lg hover:shadow-xl transition-all duration-300 border border-white/20"
           >
             แก้ไขตัวละคร
           </button>
@@ -338,23 +517,16 @@ export default function StudentDashboard() {
               แก้ไข
             </button>
           </h3>
-          <div className="flex items-center space-x-4">
-            <button onClick={openEditProfile} className="hover:opacity-80 transition-opacity">
-              <CharacterAvatar size="w-20 h-20" />
+          <div>
+            <p className="text-lg font-semibold text-white drop-shadow">{playerName}</p>
+            <p className="text-blue-200">ตัวละคร: {selectedCharacterName}</p>
+            {/* Removed image source line per user request */}
+            <button
+              onClick={openEditProfile}
+              className="mt-2 text-xs text-pink-300 hover:text-pink-100 font-medium hover:underline transition-colors"
+            >
+              คลิกเพื่อแก้ไขข้อมูล
             </button>
-            <div>
-              <p className="text-lg font-semibold text-white drop-shadow">{playerName}</p>
-              <p className="text-blue-200">ตัวละคร: {selectedCharacterName}</p>
-              <p className="text-pink-200 text-sm">
-                รูปภาพ: {characterImage ? 'รูปที่อัปโหลด' : 'Emoji เริ่มต้น'}
-              </p>
-              <button
-                onClick={openEditProfile}
-                className="mt-2 text-xs text-pink-300 hover:text-pink-100 font-medium hover:underline transition-colors"
-              >
-                คลิกเพื่อแก้ไขข้อมูล
-              </button>
-            </div>
           </div>
         </div>
 
