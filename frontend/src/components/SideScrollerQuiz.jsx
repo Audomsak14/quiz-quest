@@ -32,14 +32,14 @@ export default function SideScrollerQuiz() {
   const role = "student";
 
   // Canvas/world
-  const VIEW_W = 1200;
-  const VIEW_H = 560; // reduced from 700 to make the play box smaller
+  const VIEW_W = 1400; // enlarged from 1200 for a wider play area
+  const VIEW_H = 700;  // enlarged from 560 for a taller play area
   const [worldW, setWorldW] = useState(3600);
   const GROUND_H = 120;
   const GROUND_Y = VIEW_H - GROUND_H;
 
   // Physics
-  const SPEED = 6;
+  const SPEED = 10; // was 6; increased for noticeably faster horizontal movement
   const JUMP_V = -16;
   const GRAV = 0.9;
   const MAX_FALL = 20;
@@ -55,6 +55,8 @@ export default function SideScrollerQuiz() {
   const onGroundRef = useRef(false);
   const supportTypeRef = useRef('air'); // 'ground' | 'platform' | 'air'
   const supportYRef = useRef(null); // top Y of current support (GROUND_Y or platform.y)
+  const lastPhysicsAtRef = useRef(0);
+  const jumpStartAtRef = useRef(0);
 
   // Input state
   const inputsRef = useRef({ left: false, right: false, jumpHeld: false, jumpPressed: false, jumpPressedAt: 0 });
@@ -344,7 +346,8 @@ export default function SideScrollerQuiz() {
     });
     socketManager.on("disconnected", (info) => {
       const reason = info?.reason || "";
-      if (info?.wasKicked || reason === "io server disconnect" || reason === "transport close") redirectToLobby();
+      // Only redirect when explicitly kicked; transient disconnects should auto-reconnect
+      if (info?.wasKicked) redirectToLobby();
     });
 
     socketManager.on("gameResults", (payload) => { try { setGameResults(payload); setShowRankings(true); } catch {} });
@@ -352,7 +355,8 @@ export default function SideScrollerQuiz() {
     const failSafe = setTimeout(() => {
       try {
         const kicked = window.sessionStorage.getItem(`qq:kicked:${roomId}`) === "1";
-        if (kicked || !socketManager.isSocketConnected() || !gotRoomState) redirectToLobby();
+        // Only redirect on explicit kicked flag; allow reconnects for connection drops
+        if (kicked) redirectToLobby();
       } catch {}
     }, 2000);
 
@@ -418,6 +422,10 @@ export default function SideScrollerQuiz() {
 
     const step = () => {
       const now = performance.now();
+      // dt in "frames" (1.0 ~= 60fps). Keeps motion stable on slower/faster refresh rates.
+      if (!lastPhysicsAtRef.current) lastPhysicsAtRef.current = now;
+      const dtFrames = Math.min(3, Math.max(0.5, (now - lastPhysicsAtRef.current) / 16.6667));
+      lastPhysicsAtRef.current = now;
       // initialize animation time base
       if (!animRef.current.lastTime) animRef.current.lastTime = now;
       if (gameStarted && !showQuestion) {
@@ -425,14 +433,27 @@ export default function SideScrollerQuiz() {
         const wasGrounded = onGroundRef.current;
         let footOnSurface = false;
 
-        // horizontal: allow movement on ground and in air (scaled by AIR_CONTROL)
+        // horizontal: accelerate/decelerate for more natural motion
         {
-          const targetVx = (inp.left ? -SPEED : 0) + (inp.right ? SPEED : 0);
-          vel.x = onGroundRef.current ? targetVx : targetVx * AIR_CONTROL;
+          const dir = (inp.left ? -1 : 0) + (inp.right ? 1 : 0);
+          const maxV = SPEED * (onGroundRef.current ? 1 : AIR_CONTROL);
+          const targetVx = dir * maxV;
+          // Per-frame accel in px/frame; scaled by dtFrames
+          const accel = onGroundRef.current ? 1.65 : 0.95;
+          const decel = onGroundRef.current ? 2.35 : 1.15;
+          const rate = dir !== 0 ? accel : decel;
+          const maxDelta = rate * dtFrames;
+          const delta = Math.max(-maxDelta, Math.min(maxDelta, targetVx - vel.x));
+          vel.x += delta;
+          // Snap tiny drift
+          if (Math.abs(targetVx) < 0.001 && Math.abs(vel.x) < 0.06) vel.x = 0;
+          // Clamp
+          if (vel.x > maxV) vel.x = maxV;
+          if (vel.x < -maxV) vel.x = -maxV;
         }
 
         // gravity only when airborne
-        if (!onGroundRef.current) vel.y = Math.min(MAX_FALL, vel.y + GRAV); else vel.y = 0;
+        if (!onGroundRef.current) vel.y = Math.min(MAX_FALL, vel.y + GRAV * dtFrames); else vel.y = 0;
 
         // jump: true edge press after landing with tiny cooldown
         const edgeDown = !prevJumpHeldRef.current && inp.jumpHeld;
@@ -440,12 +461,27 @@ export default function SideScrollerQuiz() {
         const okLanding = (now - (lastLandingAtRef.current || 0) > 60);
         if (edgeDown && inp.jumpPressed && pressedAfterLanding && okLanding && onGroundRef.current) {
           vel.y = JUMP_V; onGroundRef.current = false;
+          jumpStartAtRef.current = now;
         }
         if (inp.jumpPressed) inp.jumpPressed = false;
 
+        // Variable jump height: hold for a slightly higher jump; release early to cut jump.
+        // (Does not change controls; just makes motion feel more responsive/realistic.)
+        const JUMP_HOLD_MS = 140;
+        if (!onGroundRef.current && vel.y < 0) {
+          const held = !!inp.jumpHeld && (now - (jumpStartAtRef.current || 0) < JUMP_HOLD_MS);
+          if (held) {
+            // reduce effective gravity while holding
+            vel.y -= (GRAV * 0.55) * dtFrames;
+          } else if (!inp.jumpHeld) {
+            // apply extra gravity when released to cut the jump
+            vel.y += (GRAV * 0.85) * dtFrames;
+          }
+        }
+
         // store previous position for collision direction
         prevPos.x = pos.x; prevPos.y = pos.y;
-        pos.x += vel.x; pos.y += vel.y;
+        pos.x += vel.x * dtFrames; pos.y += vel.y * dtFrames;
 
         // world bounds
         if (pos.x < 40) pos.x = 40; if (pos.x > worldW - 40) pos.x = worldW - 40;
@@ -568,17 +604,145 @@ export default function SideScrollerQuiz() {
       const ctx = canvas.getContext("2d");
       const cam = cameraXRef.current; const pos = posRef.current;
 
-      // sky
-      ctx.fillStyle = "#9cd3ff"; ctx.fillRect(0, 0, VIEW_W, VIEW_H);
-      // parallax hills
-      ctx.fillStyle = "#91e3a2";
-      for (let i = -1; i < 8; i++) { const hx = (i * 400) - (cam * 0.3 % 400); ctx.beginPath(); ctx.ellipse(hx + 200, GROUND_Y + 40, 220, 60, 0, 0, Math.PI * 2); ctx.fill(); }
+      // sky (soft gradient + horizon haze)
+      {
+        const g = ctx.createLinearGradient(0, 0, 0, VIEW_H);
+        g.addColorStop(0, "#9cd3ff");
+        g.addColorStop(0.55, "#9cd3ff");
+        // warm beach horizon tint (reuse existing palette via rgba)
+        g.addColorStop(0.78, "rgba(245,158,11,0.18)");
+        g.addColorStop(0.92, "rgba(239,68,68,0.08)");
+        g.addColorStop(1, "rgba(255,255,255,0.18)");
+        ctx.fillStyle = g;
+        ctx.fillRect(0, 0, VIEW_W, VIEW_H);
+        // haze band near horizon
+        ctx.fillStyle = "rgba(255,255,255,0.22)";
+        ctx.fillRect(0, GROUND_Y - 220, VIEW_W, 180);
+      }
+
+      // sun (parallax)
+      {
+        const sunX = (VIEW_W * 0.18) - (cam * 0.06);
+        const sunY = VIEW_H * 0.18;
+        ctx.save();
+        const glow = ctx.createRadialGradient(sunX, sunY, 8, sunX, sunY, 75);
+        glow.addColorStop(0, "rgba(245,158,11,0.55)");
+        glow.addColorStop(1, "rgba(245,158,11,0)");
+        ctx.fillStyle = glow;
+        ctx.beginPath(); ctx.arc(sunX, sunY, 75, 0, Math.PI * 2); ctx.fill();
+        ctx.fillStyle = "#f59e0b";
+        ctx.beginPath(); ctx.arc(sunX, sunY, 22, 0, Math.PI * 2); ctx.fill();
+        ctx.restore();
+      }
+
+      // clouds (simple, static; parallax)
+      {
+        const drawCloud = (cx, cy, s) => {
+          ctx.save();
+          ctx.globalAlpha = 0.85;
+          ctx.fillStyle = "#ffffff";
+          ctx.beginPath();
+          ctx.ellipse(cx - 18 * s, cy + 2 * s, 16 * s, 10 * s, 0, 0, Math.PI * 2);
+          ctx.ellipse(cx, cy, 22 * s, 14 * s, 0, 0, Math.PI * 2);
+          ctx.ellipse(cx + 20 * s, cy + 3 * s, 14 * s, 9 * s, 0, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.restore();
+        };
+
+        const cloudPar = 0.18;
+        const base = -((cam * cloudPar) % 900);
+        for (let i = -1; i < 6; i++) {
+          const x = base + (i * 900) + 180;
+          drawCloud(x, 90, 1.15);
+          drawCloud(x + 260, 140, 0.95);
+        }
+      }
+
+      // distant islands near horizon (parallax)
+      {
+        const par = 0.08;
+        const start = -((cam * par) % 800) - 800;
+        const y = GROUND_Y - 170;
+        ctx.save();
+        ctx.fillStyle = "rgba(17,24,39,0.10)"; // based on #111827
+        for (let i = 0; i < 7; i++) {
+          const x = start + i * 800;
+          ctx.beginPath();
+          ctx.ellipse(x + 260, y + 60, 240, 55, 0, 0, Math.PI * 2);
+          ctx.ellipse(x + 520, y + 70, 200, 45, 0, 0, Math.PI * 2);
+          ctx.fill();
+        }
+        ctx.restore();
+      }
+
+      // ocean (gradient + waves)
+      {
+        const oceanTop = GROUND_Y - 160;
+        const oceanBottom = GROUND_Y - 10;
+        const sea = ctx.createLinearGradient(0, oceanTop, 0, oceanBottom);
+        sea.addColorStop(0, "rgba(156,211,255,0.92)");
+        sea.addColorStop(0.55, "rgba(156,211,255,0.80)");
+        sea.addColorStop(1, "rgba(52,211,153,0.30)"); // based on #34d399
+        ctx.fillStyle = sea;
+        ctx.fillRect(0, oceanTop, VIEW_W, oceanBottom - oceanTop);
+
+        // wave lines (parallax)
+        const wavePar = 0.20;
+        const base = -((cam * wavePar) % 260);
+        for (let r = 0; r < 5; r++) {
+          const y = oceanTop + 28 + r * 26;
+          ctx.strokeStyle = "rgba(255,255,255,0.30)";
+          ctx.lineWidth = 2;
+          ctx.beginPath();
+          for (let i = -1; i < 8; i++) {
+            const x = base + i * 260;
+            ctx.moveTo(x, y);
+            ctx.quadraticCurveTo(x + 65, y - 6, x + 130, y);
+            ctx.quadraticCurveTo(x + 195, y + 6, x + 260, y);
+          }
+          ctx.stroke();
+        }
+      }
+
+      // shoreline foam
+      {
+        const foamY = GROUND_Y - 14;
+        const par = 0.25;
+        const base = -((cam * par) % 220);
+        ctx.strokeStyle = "rgba(255,255,255,0.55)";
+        ctx.lineWidth = 3;
+        ctx.beginPath();
+        for (let i = -1; i < 10; i++) {
+          const x = base + i * 220;
+          ctx.moveTo(x, foamY);
+          ctx.quadraticCurveTo(x + 55, foamY - 8, x + 110, foamY);
+          ctx.quadraticCurveTo(x + 165, foamY + 8, x + 220, foamY);
+        }
+        ctx.stroke();
+      }
 
       // ground
-      ctx.fillStyle = "#86efac"; ctx.fillRect(0 - cam, GROUND_Y, worldW, GROUND_H);
-      // ground tiles
-      ctx.fillStyle = "#34d399";
-      for (let gx = Math.floor(cam / 40) * 40 - 200; gx < cam + VIEW_W + 200; gx += 40) { ctx.fillRect(gx - cam, GROUND_Y, 32, 8); }
+      {
+        const sand = ctx.createLinearGradient(0, GROUND_Y, 0, VIEW_H);
+        sand.addColorStop(0, "rgba(245,158,11,0.32)");
+        sand.addColorStop(1, "rgba(245,158,11,0.55)");
+        ctx.fillStyle = sand;
+        ctx.fillRect(0 - cam, GROUND_Y, worldW, GROUND_H);
+
+        // sand ripples (parallax)
+        ctx.fillStyle = "rgba(17,24,39,0.06)";
+        for (let gx = Math.floor(cam / 90) * 90 - 240; gx < cam + VIEW_W + 240; gx += 90) {
+          ctx.fillRect(gx - cam, GROUND_Y + 18, 50, 3);
+          ctx.fillRect(gx - cam + 24, GROUND_Y + 38, 70, 3);
+        }
+        // tiny sparkles/shell dots
+        ctx.fillStyle = "rgba(255,255,255,0.25)";
+        for (let i = 0; i < 28; i++) {
+          const x = ((i * 97) % (VIEW_W + 120)) - 60 - ((cam * 0.35) % 97);
+          const y = GROUND_Y + 24 + ((i * 31) % Math.max(40, GROUND_H - 28));
+          ctx.fillRect(x, y, 2, 2);
+        }
+      }
 
       // platforms
       ctx.fillStyle = "#8b5cf6"; platforms.forEach(p => { ctx.fillRect(p.x - cam, p.y, p.w, p.h); });
@@ -642,16 +806,71 @@ export default function SideScrollerQuiz() {
   // Base destination size target; width may adapt to keep frame aspect ratio
   const baseH = 88;
 
+  // Estimate avatar height + baseline offset for placing the name tag above the head.
+  // Must mirror the same sizing/offset logic used in drawImage below.
+  const scaleBoost = gridType === '8x1' ? 1.20 : (gridType === '2x2gender' ? 1.12 : 1.0);
+  const sizeTune = scaleParam ?? (exactMode ? 1.0 : 0.92);
+  const destHForLabel = Math.round(baseH * scaleBoost * sizeTune);
+  const defaultYByGrid = (() => {
+    if (gridType === '8x2') return 4;
+    if (gridType === '8x1') return 4;
+    if (gridType === '6x2' || gridType === '6x1') return 4;
+    if (gridType === '2x2gender') return 4;
+    return 4;
+  })();
+  const userYOffsetForLabel = (yParam ?? defaultYByGrid);
+  const extraPadForLabel = (gridType === '2x2gender' && !exactMode) ? 2 : 0;
+  const nameTagY = avatar
+    ? (drawY - destHForLabel + userYOffsetForLabel + extraPadForLabel - 10)
+    : (drawY - 70);
+
   ctx.save();
   ctx.imageSmoothingEnabled = true; ctx.imageSmoothingQuality = 'high';
   // translate to feet position, add subtle horizontal sway, then rotate and flip by facing
   // Snap to integer pixels to avoid subpixel gaps between feet and surfaces
   ctx.translate(Math.round(meX), Math.round(drawY));
+
+  // foot shadow (helps grounding and depth)
+  {
+    const shadowW = 18 + 8 * speedFactor;
+    const shadowH = airborne ? 3.2 : 5.2;
+    ctx.save();
+    ctx.globalAlpha = airborne ? 0.10 : 0.16;
+    ctx.fillStyle = "#111827";
+    ctx.beginPath();
+    ctx.ellipse(0, 6, shadowW, shadowH, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+  }
+
   const sway = disableStylize ? 0 : (running ? Math.sin(t * 1.0) * (1.5 * ampScale) * (walkBlendRef.current || 0) : 0);
   if (sway) ctx.translate(sway, 0);
   // If using a grid that already contains left/right frames (6x*, 8x*), don't flip.
   if (!(usingGrid && (gridType === '6x1' || gridType === '6x2' || gridType === '8x1' || gridType === '8x2'))) ctx.scale(dir, 1);
   ctx.rotate(angle);
+
+  // squash/stretch for more lifelike motion (disabled in exact mode)
+  if (!disableStylize) {
+    const phase = Math.sin(t * 1.0);
+    let sx = 1.0;
+    let sy = 1.0;
+    if (running) {
+      const k = 0.035 * (walkBlendRef.current || 0);
+      sx += k * phase;
+      sy -= k * phase;
+    }
+    if (airborne) { sx += 0.020; sy -= 0.020; }
+    // landing squash (quick pulse)
+    const now2 = performance.now();
+    const landingAge = now2 - (lastLandingAtRef.current || 0);
+    if (landingAge >= 0 && landingAge < 140) {
+      const p = 1 - (landingAge / 140);
+      sx += 0.045 * p;
+      sy -= 0.060 * p;
+    }
+    ctx.scale(sx, sy);
+  }
+
   if (avatar) {
     // draw centered at feet with bottom alignment
     // Use natural size to ensure correct slicing for SVG/PNG
@@ -778,7 +997,13 @@ export default function SideScrollerQuiz() {
   // Place sprite so that its bottom (feet) touch the ground line, with head fully visible above
   const x = -destW/2, y = -destH + userYOffset + extraPad;
     // Always draw without canvas clipping to avoid accidental head cropping
+    // Add a subtle shadow for depth (doesn't affect hitboxes)
+    ctx.save();
+    ctx.shadowColor = "rgba(17,24,39,0.22)";
+    ctx.shadowBlur = 8;
+    ctx.shadowOffsetY = 4;
     ctx.drawImage(avatar, sX, sY, sW, sH, x, y, destW, destH);
+    ctx.restore();
     // Optional canvas debug guides (frame box and foot line)
     if (showDebug) {
       ctx.save();
@@ -794,12 +1019,67 @@ export default function SideScrollerQuiz() {
       ctx.restore();
     }
   } else {
-    // fallback simple character with clearer walk/jump pose
-    // Shift fallback drawing so that feet land exactly on local y=0
+    // fallback character (cute chibi) when no avatar image is available
+    // Feet baseline is local y=0.
     ctx.save();
-    ctx.translate(0, -28);
-    ctx.fillStyle = "#2563eb"; ctx.beginPath(); ctx.arc(0, 0, 20, 0, Math.PI * 2); ctx.fill(); // body
-    ctx.fillStyle = "#ef4444"; ctx.fillRect(-20, -28, 40, 10); ctx.beginPath(); ctx.arc(0, -28, 20, Math.PI, 0); ctx.fill(); // head/torso
+    // body
+    const bodyGrad = ctx.createLinearGradient(-18, -58, 18, -10);
+    bodyGrad.addColorStop(0, "#2563eb");
+    bodyGrad.addColorStop(1, "#8b5cf6");
+    ctx.fillStyle = bodyGrad;
+    ctx.strokeStyle = "rgba(255,255,255,0.75)";
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.roundRect(-16, -46, 32, 34, 12);
+    ctx.fill();
+    ctx.stroke();
+
+    // head
+    ctx.fillStyle = "rgba(245,158,11,0.28)";
+    ctx.strokeStyle = "rgba(255,255,255,0.60)";
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(0, -62, 16, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+
+    // hair + beach headband
+    ctx.fillStyle = "rgba(17,24,39,0.55)";
+    ctx.beginPath();
+    ctx.ellipse(0, -68, 17, 10, 0, Math.PI, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = "rgba(239,68,68,0.55)";
+    ctx.lineWidth = 4;
+    ctx.beginPath();
+    ctx.arc(0, -70, 14, Math.PI, Math.PI * 2);
+    ctx.stroke();
+
+    // face
+    ctx.fillStyle = "#111827";
+    ctx.beginPath(); ctx.arc(-5, -64, 2.2, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.arc(5, -64, 2.2, 0, Math.PI * 2); ctx.fill();
+    ctx.strokeStyle = "rgba(239,68,68,0.65)";
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(-4, -58);
+    ctx.quadraticCurveTo(0, -55, 4, -58);
+    ctx.stroke();
+
+    // arms
+    ctx.strokeStyle = "rgba(255,255,255,0.70)";
+    ctx.lineWidth = 3;
+    ctx.beginPath(); ctx.moveTo(-16, -32); ctx.lineTo(-26, -24); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(16, -32); ctx.lineTo(26, -24); ctx.stroke();
+
+    // legs + shoes
+    ctx.strokeStyle = "rgba(17,24,39,0.55)";
+    ctx.lineWidth = 4;
+    ctx.beginPath(); ctx.moveTo(-6, -12); ctx.lineTo(-8, 0); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(6, -12); ctx.lineTo(8, 0); ctx.stroke();
+    ctx.fillStyle = "rgba(255,255,255,0.85)";
+    ctx.fillRect(-14, 0, 10, 4);
+    ctx.fillRect(4, 0, 10, 4);
+
     ctx.restore();
   }
 
@@ -825,8 +1105,8 @@ export default function SideScrollerQuiz() {
   }
   ctx.restore();
 
-  // name tag
-  ctx.fillStyle = "#ffffff"; ctx.font = "12px sans-serif"; ctx.textAlign = "center"; ctx.fillText(`${playerName} (คุณ) · ${playerProgress.answered.length}`, meX, drawYBase - 34);
+  // name tag (above head)
+  ctx.fillStyle = "#ffffff"; ctx.font = "12px sans-serif"; ctx.textAlign = "center"; ctx.fillText(`${playerName} (คุณ) · ${playerProgress.answered.length}`, meX, nameTagY);
       } // end if !hideAvatar
     };
 
@@ -898,8 +1178,8 @@ export default function SideScrollerQuiz() {
         </div>
       </div>
 
-      <div className="w-full max-w-6xl rounded-3xl overflow-hidden shadow-2xl border border-white/40 bg-[#9bd1ff] relative">
-        <canvas ref={canvasRef} width={VIEW_W} height={VIEW_H} className="w-full h-[560px] block" />
+      <div className="w-full max-w-7xl rounded-3xl overflow-hidden shadow-2xl border border-white/40 bg-[#9bd1ff] relative">
+        <canvas ref={canvasRef} width={VIEW_W} height={VIEW_H} className="w-full h-[700px] block" />
         {showDebug && (
           <div className="absolute m-2 p-2 top-0 left-1/2 -translate-x-1/2 bg-white/90 text-[11px] text-gray-800 rounded shadow border border-gray-200">
             <div className="font-semibold">Debug</div>

@@ -4,6 +4,10 @@ import Swal from "sweetalert2";
 import { useRouter } from "next/navigation";
 import { profileStorage } from "@/lib/profileStorage";
 
+const CHARACTER_ASSET_VERSION = "2026-02-24-old";
+const GIRL_SPRITE_URL = `/characters/girl-sprite-8x1.svg?v=${CHARACTER_ASSET_VERSION}`;
+const BOY_SPRITE_URL = `/characters/boy-sprite-8x1.svg?v=${CHARACTER_ASSET_VERSION}`;
+
 // Lightweight sprite-strip previewer (e.g., 8x1). Renders selected columns as small tiles.
 function SpriteStripPreview({ src, cols = 8, rows = 1, includeCols, tile = 64, className = "" }) {
   const [img, setImg] = useState(null);
@@ -339,11 +343,11 @@ export default function CharacterMaleFemaleChoice() {
             <div className="relative bg-white/10 backdrop-blur-2xl rounded-2xl p-4 md:p-5 border border-white/20">
             <h3 className="text-white font-bold mb-3 text-lg">ตัวละครหญิง</h3>
             {/* แสดงท่าเดินเป็นภาพเคลื่อนไหว: ใช้เฟรมเดิน [1,2,3,4] จากแผง 8x1 (L/R) */}
-            <AnimatedSpritePreview src="/characters/girl-sprite-8x1.svg" cols={8} rows={1} frames={[1,2,3,4]} tile={120} fps={7} className="w-full" />
+            <AnimatedSpritePreview src={GIRL_SPRITE_URL} cols={8} rows={1} frames={[1,2,3,4]} tile={120} fps={7} className="w-full" />
             <div className="mt-4 flex gap-2">
               <button
                 onClick={async()=>{
-                  profileStorage.setImage('/characters/girl-sprite-8x1.svg');
+                  profileStorage.setImage(GIRL_SPRITE_URL);
                   profileStorage.setCharacterId('female');
                   await Swal.fire({icon:'success',title:'บันทึกสำเร็จ',timer:900,showConfirmButton:false});
                   router.back();
@@ -363,11 +367,11 @@ export default function CharacterMaleFemaleChoice() {
             <div className="relative bg-white/10 backdrop-blur-2xl rounded-2xl p-4 md:p-5 border border-white/20">
               <h3 className="text-white font-bold mb-3 text-lg">ตัวละครชาย</h3>
               {/* แสดงท่าเดินเป็นภาพเคลื่อนไหว: ใช้เฟรมเดิน [1,2,3,4] จากแผง 8x1 */}
-              <AnimatedSpritePreview src="/characters/boy-sprite-8x1.svg" cols={8} rows={1} frames={[1,2,3,4]} tile={120} fps={7} className="w-full" />
+              <AnimatedSpritePreview src={BOY_SPRITE_URL} cols={8} rows={1} frames={[1,2,3,4]} tile={120} fps={7} className="w-full" />
               <div className="mt-4 flex gap-2">
                 <button
                   onClick={async()=>{
-                    profileStorage.setImage('/characters/boy-sprite-8x1.svg');
+                    profileStorage.setImage(BOY_SPRITE_URL);
                     profileStorage.setCharacterId('male');
                     await Swal.fire({icon:'success',title:'บันทึกสำเร็จ',timer:900,showConfirmButton:false});
                     router.back();

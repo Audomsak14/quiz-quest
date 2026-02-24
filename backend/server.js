@@ -16,8 +16,30 @@ let io;
 const PORT = process.env.PORT || 5000;
 
 // Middleware
+const devLocalhostOrigin = /^https?:\/\/(localhost|127\.0\.0\.1|\[::1\])(?::\d+)?$/;
+const allowedOrigins = [
+  "http://localhost:3000",
+  "http://localhost:3001",
+  "http://127.0.0.1:3000",
+  "http://127.0.0.1:3001",
+];
+
 app.use(cors({
-  origin: ["http://localhost:3000", "http://localhost:3001"],
+  origin: (origin, callback) => {
+    // Allow non-browser clients (curl/postman) and same-origin requests
+    if (!origin) return callback(null, true);
+
+    // In dev, allow any localhost/loopback port to avoid CORS issues when Next.js chooses another port
+    if (process.env.NODE_ENV !== 'production' && devLocalhostOrigin.test(origin)) {
+      return callback(null, true);
+    }
+
+    if (allowedOrigins.includes(origin)) {
+      return callback(null, true);
+    }
+
+    return callback(new Error(`CORS blocked origin: ${origin}`));
+  },
   credentials: true
 }));
 app.use(express.json());
@@ -810,23 +832,11 @@ io.on("connection", (socket) => {
         const info = room.players.get(playerId);
         room.players.delete(playerId);
         socket.to(roomId).emit("playerLeft", { playerId });
-        // If teacher leaves this room, force all students back to lobby as a safety net
+        // If a controlling teacher leaves, do NOT auto-kick students.
+        // Teachers can explicitly end sessions using 'returnToLobby' or 'kick-all'.
+        // We still log for observability.
         if (info?.role === 'teacher') {
-          try { io.to(roomId).emit('kicked', { roomId, reason: 'teacher-left' }); } catch {}
-          try {
-            for (const [pid, pinfo] of Array.from(room.players.entries())) {
-              if (pinfo?.role !== 'teacher') {
-                if (pinfo?.socketId) {
-                  const target = io.sockets.sockets.get(pinfo.socketId);
-                  if (target) setTimeout(() => { try { target.disconnect(true); } catch {} }, 100);
-                }
-                room.players.delete(pid);
-              }
-            }
-          } catch {}
-          // reset DB status to waiting
-          try { Room.findByIdAndUpdate(roomId, { status: 'waiting' }).catch(() => {}); } catch {}
-          console.log(`↩️  Teacher left; forced all students in room ${roomId} back to lobby`);
+          console.log(`👋 Teacher left room ${roomId}; students remain in session.`);
         }
         if (room.players.size === 0) roomsLive.delete(roomId);
       }

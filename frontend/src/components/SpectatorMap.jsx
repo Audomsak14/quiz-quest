@@ -13,9 +13,11 @@ import React, { useMemo } from "react";
 export default function SpectatorMap({ roomId, players = {}, questions = [], selectedPlayerId, onClose, onPrev, onNext }) {
   const MAP_WIDTH = 1200;
   const MAP_HEIGHT = 800;
-
-  const ids = useMemo(() => Object.keys(players || {}), [players]);
-  const selected = selectedPlayerId && players[selectedPlayerId] ? players[selectedPlayerId] : null;
+  // Purely presentational: rely on props from parent (TeacherGameView)
+  const effectivePlayers = players || {};
+  const effectiveQuestions = questions || [];
+  const ids = useMemo(() => Object.keys(effectivePlayers || {}), [effectivePlayers]);
+  const selected = selectedPlayerId && effectivePlayers[selectedPlayerId] ? effectivePlayers[selectedPlayerId] : null;
 
   return (
     <div className="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center p-4">
@@ -121,7 +123,7 @@ export default function SpectatorMap({ roomId, players = {}, questions = [], sel
             </g>
 
             {/* Question spots */}
-            {(questions || []).map((spot) => {
+            {(effectiveQuestions || []).map((spot) => {
               const spotX = spot.x; const spotY = spot.y;
               return (
                 <g key={spot.id}>
@@ -134,7 +136,7 @@ export default function SpectatorMap({ roomId, players = {}, questions = [], sel
             })}
 
             {/* Players */}
-            {Object.values(players).map((p) => {
+            {Object.values(effectivePlayers).map((p) => {
               const playerX = p.x; const playerY = p.y;
               const isSelected = p === selected;
               return (

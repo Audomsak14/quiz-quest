@@ -87,7 +87,13 @@ export default function Login() {
     } catch (err) {
   console.error("❌ Login error:", err);
   console.error("📋 Error response:", err.response?.data);
-  await Swal.fire({ icon: 'error', title: 'ล็อกอินไม่สำเร็จ', text: err.response?.data?.error || err.message });
+
+  const isNetwork = !err.response;
+  const message = isNetwork
+    ? 'เชื่อมต่อเซิร์ฟเวอร์ไม่ได้ (ตรวจว่า backend รันที่ http://localhost:5000 และเปิด MongoDB แล้ว)'
+    : (err.response?.data?.error || err.message);
+
+  await Swal.fire({ icon: 'error', title: 'ล็อกอินไม่สำเร็จ', text: message });
     }
   };
 

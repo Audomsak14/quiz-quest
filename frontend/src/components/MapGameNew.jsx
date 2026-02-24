@@ -22,12 +22,72 @@ const customStyles = `
     }
   }
   
+  @keyframes characterBob {
+    0%, 100% { transform: translateY(0px); }
+    25% { transform: translateY(-2px) rotate(1deg); }
+    50% { transform: translateY(-4px); }
+    75% { transform: translateY(-2px) rotate(-1deg); }
+  }
+  
+  @keyframes characterPulse {
+    0%, 100% { transform: scale(1); }
+    25% { transform: scale(1.02); }
+    50% { transform: scale(1.05); }
+    75% { transform: scale(1.02); }
+  }
+  
+  @keyframes sparkleRotate {
+    0% { transform: rotate(0deg) scale(1); opacity: 1; }
+    25% { opacity: 0.7; }
+    50% { transform: rotate(180deg) scale(1.2); opacity: 0.5; }
+    75% { opacity: 0.8; }
+    100% { transform: rotate(360deg) scale(1); opacity: 1; }
+  }
+  
+  @keyframes glowPulse {
+    0%, 100% { opacity: 0.3; filter: blur(2px); }
+    25% { opacity: 0.5; }
+    50% { opacity: 0.8; filter: blur(1px); }
+    75% { opacity: 0.6; }
+  }
+  
+  @keyframes walkingBob {
+    0%, 100% { transform: translateY(0px) scale(1); }
+    25% { transform: translateY(-1px) scale(1.01) rotate(0.5deg); }
+    50% { transform: translateY(-2px) scale(1.02); }
+    75% { transform: translateY(-1px) scale(1.01) rotate(-0.5deg); }
+  }
+  
   .animate-fadeIn {
     animation: fadeIn 0.3s ease-out;
   }
   
   .animate-slideUp {
     animation: slideUp 0.4s cubic-bezier(0.34, 1.56, 0.64, 1);
+  }
+  
+  .character-bob {
+    animation: characterBob 2s ease-in-out infinite;
+  }
+  
+  .character-pulse {
+    animation: characterPulse 3s ease-in-out infinite;
+  }
+  
+  .sparkle-rotate {
+    animation: sparkleRotate 4s linear infinite;
+  }
+  
+  .glow-pulse {
+    animation: glowPulse 2s ease-in-out infinite;
+  }
+  
+  .walking-bob {
+    animation: walkingBob 0.6s ease-in-out infinite;
+  }
+  
+  .smooth-transition {
+    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
   }
 `;
 
@@ -55,6 +115,7 @@ export default function MapGame() {
   // Avatar position (in pixels)
   const [position, setPosition] = useState({ x: 400, y: 300 });
   const [otherPlayers, setOtherPlayers] = useState({});
+  const [isMoving, setIsMoving] = useState(false); // Track movement for animations
   
   // Game container ref
   const containerRef = useRef(null);
@@ -81,9 +142,10 @@ export default function MapGame() {
   const [showQuestionModal, setShowQuestionModal] = useState(false);
   const [playerProgress, setPlayerProgress] = useState({ answered: [], score: 0 });
   
-  const MOVE_SPEED = 3;
-  const MAP_WIDTH = 1200;
-  const MAP_HEIGHT = 800;
+    const MOVE_SPEED = 34; // pixels per second (derived from previous feel ~0.56 * 60)
+  const KEY_STEP = 17;    // keyboard step distance (pixels per key press)
+  const MAP_WIDTH = 2400; // widened further for an even broader play area
+  const MAP_HEIGHT = 1000; // taller canvas for larger visuals
   
   // Question state - will be loaded from API
   const [questionSpots, setQuestionSpots] = useState([]);
@@ -292,21 +354,18 @@ export default function MapGame() {
         try { window.location.replace('/StudentDashboard/gameroom'); } catch { window.location.href = '/StudentDashboard/gameroom'; }
       });
 
-      // Also handle disconnects that follow a kick or server disconnects
+      // On disconnect, do not auto-redirect unless explicitly kicked;
+      // allow transient disconnects to reconnect without ejecting the player.
       socketManager.on('disconnected', (info) => {
-        const reason = info?.reason || '';
         const wasKicked = !!info?.wasKicked;
-        // Redirect if we know we were kicked, or if server forcibly disconnected us
-        if (wasKicked || reason === 'io server disconnect' || reason === 'transport close') {
-          redirectToLobby();
-        }
+        if (wasKicked) redirectToLobby();
       });
 
-      // Fallback: if within 2 seconds we are not connected and no roomState came (e.g., banned join), redirect
+      // Fallback: leave only if explicitly kicked (avoid ejecting on brief connection hiccups)
       const failSafe = setTimeout(() => {
         try {
           const kickedFlag = window.sessionStorage.getItem(`qq:kicked:${roomId}`) === '1';
-          if (kickedFlag || !socketManager.isSocketConnected() || !gotRoomState) {
+          if (kickedFlag) {
             redirectToLobby();
           }
         } catch {}
@@ -365,8 +424,8 @@ export default function MapGame() {
   const startHold = useCallback((dx, dy) => {
     // initial step for snappy feel
     stepBy(dx, dy);
-    if (moveHoldRef.current) clearInterval(moveHoldRef.current);
-    moveHoldRef.current = setInterval(() => stepBy(dx, dy), 120);
+  if (moveHoldRef.current) clearInterval(moveHoldRef.current);
+  moveHoldRef.current = setInterval(() => stepBy(dx, dy), 60);
   }, [stepBy]);
 
   const stopHold = useCallback(() => {
@@ -403,16 +462,16 @@ export default function MapGame() {
       switch (code) {
         case 'ArrowUp':
         case 'KeyW':
-          e.preventDefault(); stepBy(0, -40); break;
+          e.preventDefault(); stepBy(0, -KEY_STEP); break;
         case 'ArrowDown':
         case 'KeyS':
-          e.preventDefault(); stepBy(0, 40); break;
+          e.preventDefault(); stepBy(0, KEY_STEP); break;
         case 'ArrowLeft':
         case 'KeyA':
-          e.preventDefault(); stepBy(-40, 0); break;
+          e.preventDefault(); stepBy(-KEY_STEP, 0); break;
         case 'ArrowRight':
         case 'KeyD':
-          e.preventDefault(); stepBy(40, 0); break;
+          e.preventDefault(); stepBy(KEY_STEP, 0); break;
         default:
           break;
       }
@@ -422,20 +481,46 @@ export default function MapGame() {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [stepBy, showQuestionModal, gameStarted]);
 
-  // Movement animation loop
+  // Movement animation loop with enhanced smoothing
   useEffect(() => {
-    const animate = () => {
+    let lastTime = 0;
+    let lastPosition = { x: 400, y: 300 };
+    
+    // Easing function for smooth movement
+    const easeOutQuart = (t) => 1 - Math.pow(1 - t, 4);
+    const easeInOutCubic = (t) => t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
+    
+    const animate = (currentTime) => {
+      const deltaMs = lastTime ? (currentTime - lastTime) : 16.67; // default first frame ~60fps
+      lastTime = currentTime;
+      const deltaTime = Math.min(deltaMs / 1000, 1/30); // seconds, cap to avoid huge jumps
+      
       const target = targetPositionRef.current;
       setPosition(currentPos => {
         const dx = target.x - currentPos.x;
         const dy = target.y - currentPos.y;
         const distance = Math.sqrt(dx * dx + dy * dy);
         
-        if (distance < 2) {
-          return target; // arrived
+        // Check if character is moving
+        const movementThreshold = 0.5;
+        const actualDistance = Math.sqrt(
+          Math.pow(currentPos.x - lastPosition.x, 2) + 
+          Math.pow(currentPos.y - lastPosition.y, 2)
+        );
+        setIsMoving(actualDistance > movementThreshold || distance > 2);
+        lastPosition = { ...currentPos };
+        
+        if (distance < 1.5) {
+          return target; // arrived with tighter threshold
         }
         
-        const stepSize = Math.min(MOVE_SPEED, distance);
+        // Enhanced movement with smooth deceleration
+        const normalizedDistance = Math.min(distance / 100, 1); // Normalize for easing
+        const easedProgress = easeInOutCubic(normalizedDistance);
+        
+        // Dynamic speed based on distance and true deltaTime seconds
+        const adaptiveSpeed = MOVE_SPEED * deltaTime; // pixels per second * seconds
+        const stepSize = Math.min(adaptiveSpeed * (0.3 + easedProgress * 0.7), distance);
         const ratio = stepSize / distance;
         
         return {
@@ -582,80 +667,121 @@ export default function MapGame() {
         </div>
       )}
       
-      {/* Stylish Game HUD (non-blocking) with collapse/expand */}
+      {/* Enhanced Stylish Game HUD (non-blocking) with collapse/expand */}
       <div className="absolute top-6 left-6 z-20">
         {hudCollapsed ? (
           <button
             onClick={() => setHudCollapsed(false)}
-            className="pointer-events-auto bg-white/85 backdrop-blur-xl rounded-full shadow-[0_10px_30px_rgba(0,0,0,0.18)] border border-white/40 px-4 py-2 flex items-center gap-2 hover:shadow-[0_12px_36px_rgba(0,0,0,0.22)] transition-shadow"
+            className="pointer-events-auto bg-gradient-to-br from-white/95 to-white/85 backdrop-blur-xl rounded-2xl shadow-[0_12px_32px_rgba(0,0,0,0.15)] border border-white/50 px-5 py-3 flex items-center gap-3 hover:shadow-[0_16px_40px_rgba(0,0,0,0.2)] transition-all duration-300 transform hover:scale-105 smooth-transition"
             title="แสดง HUD"
           >
-            <span className="text-xl">👤</span>
-            <span className="text-sm text-gray-700 max-w-[140px] truncate">{playerName}</span>
-            <span className="text-xs text-blue-700 font-semibold">{playerProgress.score}</span>
-            <span className="text-xs text-gray-400">|</span>
-            <span className="text-xs text-green-700 font-semibold">{playerProgress.answered.length}/{totalQuestions || 5}</span>
+            <div className="w-8 h-8 bg-gradient-to-br from-purple-500 to-blue-500 rounded-xl flex items-center justify-center shadow-lg">
+              <span className="text-white text-lg">👤</span>
+            </div>
+            <div className="flex flex-col">
+              <span className="text-sm text-gray-700 font-semibold max-w-[120px] truncate">{playerName}</span>
+              <div className="flex items-center gap-2 text-xs">
+                <span className="text-blue-700 font-bold bg-blue-50 px-2 py-0.5 rounded-lg">{playerProgress.score}</span>
+                <span className="text-gray-400">•</span>
+                <span className="text-green-700 font-bold bg-green-50 px-2 py-0.5 rounded-lg">{playerProgress.answered.length}/{totalQuestions || 5}</span>
+              </div>
+            </div>
           </button>
         ) : (
           <>
-            {/* Toggle row */}
-            <div className="flex mb-2">
+            {/* Enhanced Toggle row */}
+            <div className="flex mb-3">
               <button
                 onClick={() => setHudCollapsed(true)}
-                className="pointer-events-auto w-8 h-8 rounded-xl bg-white/90 hover:bg-white text-gray-700 flex items-center justify-center shadow border border-white/60"
+                className="pointer-events-auto w-10 h-10 rounded-xl bg-gradient-to-br from-white/95 to-gray-50/95 hover:from-white hover:to-gray-50 text-gray-700 flex items-center justify-center shadow-lg border border-white/60 transition-all duration-200 transform hover:scale-105"
                 title="ซ่อน HUD"
               >
-                –
+                <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
+                  <path fillRule="evenodd" d="M3 10a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1z" clipRule="evenodd" />
+                </svg>
               </button>
             </div>
-            {/* HUD Card - non-blocking */}
-            <div className="bg-white/90 backdrop-blur-xl rounded-2xl shadow-[0_12px_40px_rgba(0,0,0,0.18)] border border-white/30 p-4 min-w-[280px] pointer-events-none">
-              <div className="flex items-center space-x-3 mb-3">
-                <div className="w-12 h-12 bg-gradient-to-br from-purple-500 to-blue-500 rounded-xl flex items-center justify-center shadow-lg border border-white/50">
-                  <span className="text-white text-xl">👤</span>
+            {/* Enhanced HUD Card - non-blocking */}
+            <div className="bg-gradient-to-br from-white/95 to-white/90 backdrop-blur-xl rounded-3xl shadow-[0_16px_48px_rgba(0,0,0,0.12)] border border-white/40 p-6 min-w-[320px] pointer-events-none">
+              {/* Header with profile */}
+              <div className="flex items-center space-x-4 mb-4">
+                <div className="relative">
+                  <div className="w-14 h-14 bg-gradient-to-br from-purple-500 via-blue-500 to-cyan-500 rounded-2xl flex items-center justify-center shadow-xl border-2 border-white/60">
+                    <span className="text-white text-2xl">👤</span>
+                  </div>
+                  <div className={`absolute -bottom-1 -right-1 w-5 h-5 rounded-full border-2 border-white ${
+                    isConnected ? 'bg-green-500' : 'bg-red-500'
+                  }`}></div>
                 </div>
                 <div>
-                  <div className="text-lg font-bold text-gray-800">{playerName}</div>
-                  <div className="text-sm text-gray-500">Room: {roomId}</div>
+                  <div className="text-xl font-bold bg-gradient-to-r from-gray-800 to-gray-600 bg-clip-text text-transparent">
+                    {playerName}
+                  </div>
+                  <div className="text-sm text-gray-500 flex items-center gap-2">
+                    <span>Room: {roomId}</span>
+                    {isMoving && <span className="text-blue-500 animate-pulse">🏃‍♂️</span>}
+                  </div>
                 </div>
               </div>
               
-              <div className="grid grid-cols-2 gap-2 mb-3">
-                <div className="bg-gradient-to-br from-blue-50 to-blue-100 rounded-xl p-2 text-center border border-blue-100">
-                  <div className="text-xs text-blue-600 font-semibold">Score</div>
-                  <div className="text-lg font-bold text-blue-700">{playerProgress.score}</div>
+              {/* Enhanced Stats Grid */}
+              <div className="grid grid-cols-2 gap-3 mb-4">
+                <div className="bg-gradient-to-br from-blue-50 to-blue-100 rounded-2xl p-4 text-center border border-blue-200/50 shadow-inner">
+                  <div className="text-xs text-blue-600 font-semibold uppercase tracking-wider">Score</div>
+                  <div className="text-2xl font-bold text-blue-700 mt-1">{playerProgress.score}</div>
+                  <div className="text-xs text-blue-500 mt-1">คะแนน</div>
                 </div>
-                <div className="bg-gradient-to-br from-green-50 to-green-100 rounded-xl p-2 text-center border border-green-100">
-                  <div className="text-xs text-green-600 font-semibold">Progress</div>
-                  <div className="text-lg font-bold text-green-700">{playerProgress.answered.length}/{totalQuestions || 5}</div>
+                <div className="bg-gradient-to-br from-green-50 to-emerald-100 rounded-2xl p-4 text-center border border-green-200/50 shadow-inner">
+                  <div className="text-xs text-green-600 font-semibold uppercase tracking-wider">Progress</div>
+                  <div className="text-2xl font-bold text-green-700 mt-1">{playerProgress.answered.length}/{totalQuestions || 5}</div>
+                  <div className="text-xs text-green-500 mt-1">คำถาม</div>
                 </div>
               </div>
               
-              <div className="grid grid-cols-1 gap-2 mb-3 place-items-center">
-                <div className="bg-gradient-to-br from-purple-50 to-purple-100 rounded-xl p-2 text-center">
-                  <div className="text-xs text-purple-600 font-semibold">Status</div>
-                  <div className="text-lg">{gameStarted ? '🎮' : '⏳'}</div>
+              {/* Game Status */}
+              <div className="mb-4">
+                <div className="bg-gradient-to-br from-purple-50 to-pink-100 rounded-2xl p-4 text-center border border-purple-200/50 shadow-inner">
+                  <div className="text-xs text-purple-600 font-semibold uppercase tracking-wider">Status</div>
+                  <div className="text-3xl my-2">{gameStarted ? '🎮' : '⏳'}</div>
+                  <div className="text-sm font-medium text-purple-700">
+                    {gameStarted ? (isMoving ? 'กำลังเดิน' : 'พร้อมเล่น') : 'รอเริ่มเกม'}
+                  </div>
                 </div>
               </div>
 
-              <div className="mb-2 h-1.5 bg-gray-100 rounded-full overflow-hidden">
-                <div
-                  className="h-full bg-gradient-to-r from-emerald-400 to-green-500 transition-all"
-                  style={{ width: `${Math.min(100, Math.round(((playerProgress.answered.length || 0) / Math.max(1, totalQuestions || 5)) * 100))}%` }}
-                />
+              {/* Enhanced Progress Bar */}
+              <div className="mb-4">
+                <div className="flex justify-between items-center mb-2">
+                  <span className="text-xs text-gray-600 font-semibold">ความคืบหน้า</span>
+                  <span className="text-xs text-gray-600 font-bold">
+                    {Math.min(100, Math.round(((playerProgress.answered.length || 0) / Math.max(1, totalQuestions || 5)) * 100))}%
+                  </span>
+                </div>
+                <div className="h-3 bg-gray-200 rounded-full overflow-hidden shadow-inner border border-gray-300/30">
+                  <div
+                    className="h-full bg-gradient-to-r from-emerald-400 via-green-500 to-cyan-500 transition-all duration-500 ease-out rounded-full shadow-lg"
+                    style={{ width: `${Math.min(100, Math.round(((playerProgress.answered.length || 0) / Math.max(1, totalQuestions || 5)) * 100))}%` }}
+                  />
+                </div>
               </div>
 
-              <div className={`text-xs px-3 py-2 rounded-xl text-center font-semibold shadow border ${
-                isConnected ? 'bg-green-100 text-green-700 border-green-200' : 'bg-red-100 text-red-700 border-red-200'
+              {/* Enhanced Connection Status */}
+              <div className={`text-xs px-4 py-3 rounded-2xl text-center font-semibold shadow-inner border transition-all duration-300 ${
+                isConnected 
+                  ? 'bg-gradient-to-r from-green-100 to-emerald-100 text-green-700 border-green-200/50' 
+                  : 'bg-gradient-to-r from-red-100 to-pink-100 text-red-700 border-red-200/50'
               }`}>
-                {isConnected ? '🟢 เชื่อมต่อแล้ว' : '🔴 การเชื่อมต่อขาด'}
+                <div className="flex items-center justify-center gap-2">
+                  <div className={`w-2 h-2 rounded-full ${isConnected ? 'bg-green-500' : 'bg-red-500'} animate-pulse`}></div>
+                  {isConnected ? 'เชื่อมต่อแล้ว' : 'การเชื่อมต่อขาด'}
+                </div>
               </div>
             </div>
           </>
         )}
       </div>
 
-      {/* Beautiful Game Canvas with SVG */}
+      {/* Beautiful Game Canvas with SVG (nearly full-screen; keep top HUD area) */}
       <div 
         ref={containerRef}
         className="relative w-full h-full cursor-pointer"
@@ -667,33 +793,209 @@ export default function MapGame() {
           height="100%" 
           viewBox={`0 0 ${MAP_WIDTH} ${MAP_HEIGHT}`}
           className="absolute inset-0"
-          style={{ width: '100%', height: '100%' }}
+          preserveAspectRatio="xMidYMid meet"
+          style={{ width: '100vw', height: 'calc(100vh - 180px)' }}
         >
           {/* Define patterns and effects */}
           <defs>
-            {/* Grass texture */}
-            <pattern id="grassTexture" x="0" y="0" width="60" height="60" patternUnits="userSpaceOnUse">
-              <rect width="60" height="60" fill="#4ade80"/>
-              <circle cx="15" cy="15" r="2" fill="#22c55e" opacity="0.6"/>
-              <circle cx="45" cy="30" r="1.5" fill="#16a34a" opacity="0.8"/>
-              <circle cx="30" cy="50" r="1" fill="#22c55e" opacity="0.7"/>
-              <circle cx="10" cy="45" r="1.5" fill="#16a34a" opacity="0.6"/>
+            {/* Enhanced grass texture with multiple layers */}
+            <pattern id="grassTexture" x="0" y="0" width="80" height="80" patternUnits="userSpaceOnUse">
+              <rect width="80" height="80" fill="#4ade80"/>
+              {/* Grass blades */}
+              <circle cx="20" cy="20" r="3" fill="#22c55e" opacity="0.7"/>
+              <circle cx="60" cy="35" r="2" fill="#16a34a" opacity="0.8"/>
+              <circle cx="45" cy="65" r="2.5" fill="#22c55e" opacity="0.6"/>
+              <circle cx="15" cy="55" r="1.8" fill="#16a34a" opacity="0.9"/>
+              <circle cx="70" cy="15" r="2.2" fill="#34d399" opacity="0.7"/>
+              <circle cx="35" cy="40" r="1.5" fill="#10b981" opacity="0.8"/>
+              {/* Flowers */}
+              <circle cx="25" cy="70" r="1" fill="#fbbf24" opacity="0.9"/>
+              <circle cx="65" cy="50" r="1.2" fill="#f59e0b" opacity="0.8"/>
+              <circle cx="50" cy="25" r="0.8" fill="#ec4899" opacity="0.7"/>
             </pattern>
 
-            {/* Wall gradient */}
-            <linearGradient id="wallGradient" x1="0%" y1="0%" x2="100%" y2="100%">
-              <stop offset="0%" style={{stopColor:'#6366f1', stopOpacity:1}} />
-              <stop offset="50%" style={{stopColor:'#8b5cf6', stopOpacity:1}} />
-              <stop offset="100%" style={{stopColor:'#a855f7', stopOpacity:1}} />
+            {/* Sky gradient background */}
+            <linearGradient id="skyGradient" x1="0%" y1="0%" x2="0%" y2="100%">
+              <stop offset="0%" style={{stopColor:'#87ceeb', stopOpacity:1}} />
+              <stop offset="30%" style={{stopColor:'#b6e5f5', stopOpacity:1}} />
+              <stop offset="60%" style={{stopColor:'#d6f3ff', stopOpacity:1}} />
+              <stop offset="100%" style={{stopColor:'#f0f9ff', stopOpacity:1}} />
             </linearGradient>
 
-            {/* Tree gradients */}
-            <radialGradient id="leafGradient" cx="50%" cy="30%" r="70%">
+            {/* Ground gradient */}
+            <linearGradient id="groundGradient" x1="0%" y1="0%" x2="0%" y2="100%">
+              <stop offset="0%" style={{stopColor:'#4ade80', stopOpacity:1}} />
+              <stop offset="50%" style={{stopColor:'#22c55e', stopOpacity:1}} />
+              <stop offset="100%" style={{stopColor:'#16a34a', stopOpacity:1}} />
+            </linearGradient>
+
+            {/* Cloud pattern */}
+            <pattern id="cloudPattern" x="0" y="0" width="400" height="200" patternUnits="userSpaceOnUse">
+              <rect width="400" height="200" fill="none"/>
+              <ellipse cx="80" cy="40" rx="35" ry="15" fill="#ffffff" opacity="0.8"/>
+              <ellipse cx="100" cy="35" rx="25" ry="12" fill="#ffffff" opacity="0.9"/>
+              <ellipse cx="65" cy="35" rx="20" ry="10" fill="#ffffff" opacity="0.7"/>
+              
+              <ellipse cx="280" cy="80" rx="40" ry="18" fill="#ffffff" opacity="0.6"/>
+              <ellipse cx="305" cy="75" rx="30" ry="15" fill="#ffffff" opacity="0.8"/>
+              <ellipse cx="260" cy="75" rx="25" ry="12" fill="#ffffff" opacity="0.7"/>
+              
+              <ellipse cx="350" cy="120" rx="30" ry="12" fill="#ffffff" opacity="0.9"/>
+              <ellipse cx="370" cy="118" rx="20" ry="8" fill="#ffffff" opacity="0.8"/>
+            </pattern>
+
+            {/* Enhanced wall gradient with depth */}
+            <linearGradient id="wallGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+              <stop offset="0%" style={{stopColor:'#6366f1', stopOpacity:1}} />
+              <stop offset="25%" style={{stopColor:'#8b5cf6', stopOpacity:1}} />
+              <stop offset="75%" style={{stopColor:'#a855f7', stopOpacity:1}} />
+              <stop offset="100%" style={{stopColor:'#7c3aed', stopOpacity:1}} />
+            </linearGradient>
+
+            {/* Enhanced tree gradients */}
+            <radialGradient id="leafGradient" cx="30%" cy="30%" r="100%">
               <stop offset="0%" style={{stopColor:'#34d399', stopOpacity:1}} />
-              <stop offset="100%" style={{stopColor:'#10b981', stopOpacity:1}} />
+              <stop offset="40%" style={{stopColor:'#10b981', stopOpacity:1}} />
+              <stop offset="100%" style={{stopColor:'#065f46', stopOpacity:1}} />
             </radialGradient>
 
-            {/* Question glow effect */}
+            <linearGradient id="trunkGradient" x1="0%" y1="0%" x2="100%" y2="0%">
+              <stop offset="0%" style={{stopColor:'#92400e', stopOpacity:1}} />
+              <stop offset="50%" style={{stopColor:'#8b4513', stopOpacity:1}} />
+              <stop offset="100%" style={{stopColor:'#451a03', stopOpacity:1}} />
+            </linearGradient>
+
+            {/* Flower gradients */}
+            <radialGradient id="flowerGradient1" cx="50%" cy="50%" r="50%">
+              <stop offset="0%" style={{stopColor:'#fef3c7', stopOpacity:1}} />
+              <stop offset="100%" style={{stopColor:'#f59e0b', stopOpacity:1}} />
+            </radialGradient>
+
+            <radialGradient id="flowerGradient2" cx="50%" cy="50%" r="50%">
+              <stop offset="0%" style={{stopColor:'#fce7f3', stopOpacity:1}} />
+              <stop offset="100%" style={{stopColor:'#ec4899', stopOpacity:1}} />
+            </radialGradient>
+
+            <radialGradient id="flowerGradient3" cx="50%" cy="50%" r="50%">
+              <stop offset="0%" style={{stopColor:'#dbeafe', stopOpacity:1}} />
+              <stop offset="100%" style={{stopColor:'#3b82f6', stopOpacity:1}} />
+            </radialGradient>
+
+            {/* Enhanced player body gradient */}
+            <linearGradient id="playerBodyGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+              <stop offset="0%" style={{stopColor:'#3b82f6', stopOpacity:1}} />
+              <stop offset="30%" style={{stopColor:'#6366f1', stopOpacity:1}} />
+              <stop offset="70%" style={{stopColor:'#1d4ed8', stopOpacity:1}} />
+              <stop offset="100%" style={{stopColor:'#1e40af', stopOpacity:1}} />
+            </linearGradient>
+            
+            {/* Body outline gradient */}
+            <linearGradient id="bodyOutlineGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+              <stop offset="0%" style={{stopColor:'#1e293b', stopOpacity:1}} />
+              <stop offset="50%" style={{stopColor:'#475569', stopOpacity:1}} />
+              <stop offset="100%" style={{stopColor:'#1e293b', stopOpacity:1}} />
+            </linearGradient>
+            
+            {/* Body border gradient */}
+            <linearGradient id="bodyBorderGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+              <stop offset="0%" style={{stopColor:'#60a5fa', stopOpacity:1}} />
+              <stop offset="50%" style={{stopColor:'#3b82f6', stopOpacity:1}} />
+              <stop offset="100%" style={{stopColor:'#2563eb', stopOpacity:1}} />
+            </linearGradient>
+
+            {/* Face gradient */}
+            <radialGradient id="faceGradient" cx="30%" cy="30%" r="80%">
+              <stop offset="0%" style={{stopColor:'#fcd34d', stopOpacity:1}} />
+              <stop offset="70%" style={{stopColor:'#fbbf24', stopOpacity:1}} />
+              <stop offset="100%" style={{stopColor:'#f59e0b', stopOpacity:1}} />
+            </radialGradient>
+            
+            {/* Face border gradient */}
+            <linearGradient id="faceBorderGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+              <stop offset="0%" style={{stopColor:'#f59e0b', stopOpacity:1}} />
+              <stop offset="100%" style={{stopColor:'#d97706', stopOpacity:1}} />
+            </linearGradient>
+
+            {/* Controller gradient */}
+            <linearGradient id="controllerGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+              <stop offset="0%" style={{stopColor:'#34d399', stopOpacity:1}} />
+              <stop offset="50%" style={{stopColor:'#10b981', stopOpacity:1}} />
+              <stop offset="100%" style={{stopColor:'#059669', stopOpacity:1}} />
+            </linearGradient>
+
+            {/* Crown gradient */}
+            <linearGradient id="crownGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+              <stop offset="0%" style={{stopColor:'#fcd34d', stopOpacity:1}} />
+              <stop offset="30%" style={{stopColor:'#fbbf24', stopOpacity:1}} />
+              <stop offset="70%" style={{stopColor:'#f59e0b', stopOpacity:1}} />
+              <stop offset="100%" style={{stopColor:'#d97706', stopOpacity:1}} />
+            </linearGradient>
+            
+            {/* Crown border gradient */}
+            <linearGradient id="crownBorderGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+              <stop offset="0%" style={{stopColor:'#f59e0b', stopOpacity:1}} />
+              <stop offset="100%" style={{stopColor:'#b45309', stopOpacity:1}} />
+            </linearGradient>
+
+            {/* Rainbow gradient for outer ring */}
+            <linearGradient id="rainbowGradient" x1="0%" y1="0%" x2="100%" y2="0%">
+              <stop offset="0%" style={{stopColor:'#ef4444', stopOpacity:1}} />
+              <stop offset="16.66%" style={{stopColor:'#f97316', stopOpacity:1}} />
+              <stop offset="33.33%" style={{stopColor:'#eab308', stopOpacity:1}} />
+              <stop offset="50%" style={{stopColor:'#22c55e', stopOpacity:1}} />
+              <stop offset="66.66%" style={{stopColor:'#3b82f6', stopOpacity:1}} />
+              <stop offset="83.33%" style={{stopColor:'#8b5cf6', stopOpacity:1}} />
+              <stop offset="100%" style={{stopColor:'#ec4899', stopOpacity:1}} />
+            </linearGradient>
+
+            {/* Shadow gradient */}
+            <radialGradient id="shadowGradient" cx="50%" cy="50%" r="100%">
+              <stop offset="0%" style={{stopColor:'#000000', stopOpacity:0.6}} />
+              <stop offset="100%" style={{stopColor:'#000000', stopOpacity:0}} />
+            </radialGradient>
+
+            {/* Name tag gradient */}
+            <linearGradient id="nameTagGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+              <stop offset="0%" style={{stopColor:'#8b5cf6', stopOpacity:1}} />
+              <stop offset="30%" style={{stopColor:'#7c3aed', stopOpacity:1}} />
+              <stop offset="70%" style={{stopColor:'#6366f1', stopOpacity:1}} />
+              <stop offset="100%" style={{stopColor:'#4f46e5', stopOpacity:1}} />
+            </linearGradient>
+            
+            {/* Name tag border gradient */}
+            <linearGradient id="nameTagBorderGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+              <stop offset="0%" style={{stopColor:'#a78bfa', stopOpacity:1}} />
+              <stop offset="100%" style={{stopColor:'#60a5fa', stopOpacity:1}} />
+            </linearGradient>
+
+            {/* Other player gradients */}
+            <linearGradient id="otherPlayerOutlineGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+              <stop offset="0%" style={{stopColor:'#374151', stopOpacity:1}} />
+              <stop offset="50%" style={{stopColor:'#4b5563', stopOpacity:1}} />
+              <stop offset="100%" style={{stopColor:'#374151', stopOpacity:1}} />
+            </linearGradient>
+            
+            <linearGradient id="otherPlayerBodyGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+              <stop offset="0%" style={{stopColor:'#ef4444', stopOpacity:1}} />
+              <stop offset="30%" style={{stopColor:'#f97316', stopOpacity:1}} />
+              <stop offset="70%" style={{stopColor:'#dc2626', stopOpacity:1}} />
+              <stop offset="100%" style={{stopColor:'#b91c1c', stopOpacity:1}} />
+            </linearGradient>
+            
+            <radialGradient id="otherFaceGradient" cx="30%" cy="30%" r="80%">
+              <stop offset="0%" style={{stopColor:'#fde68a', stopOpacity:1}} />
+              <stop offset="70%" style={{stopColor:'#fcd34d', stopOpacity:1}} />
+              <stop offset="100%" style={{stopColor:'#f59e0b', stopOpacity:1}} />
+            </radialGradient>
+            
+            <linearGradient id="otherNameTagGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+              <stop offset="0%" style={{stopColor:'#64748b', stopOpacity:1}} />
+              <stop offset="30%" style={{stopColor:'#475569', stopOpacity:1}} />
+              <stop offset="70%" style={{stopColor:'#334155', stopOpacity:1}} />
+              <stop offset="100%" style={{stopColor:'#1e293b', stopOpacity:1}} />
+            </linearGradient>
+
+            {/* Enhanced filter effects */}
             <filter id="questionGlow" x="-50%" y="-50%" width="200%" height="200%">
               <feGaussianBlur stdDeviation="4" result="coloredBlur"/>
               <feMerge>
@@ -702,7 +1004,6 @@ export default function MapGame() {
               </feMerge>
             </filter>
 
-            {/* Player glow */}
             <filter id="playerGlow" x="-50%" y="-50%" width="200%" height="200%">
               <feGaussianBlur stdDeviation="3" result="coloredBlur"/>
               <feMerge>
@@ -710,69 +1011,358 @@ export default function MapGame() {
                 <feMergeNode in="SourceGraphic"/>
               </feMerge>
             </filter>
+            
+            <filter id="dropShadow" x="-50%" y="-50%" width="200%" height="200%">
+              <feDropShadow dx="2" dy="4" stdDeviation="3" floodColor="#000000" floodOpacity="0.3"/>
+            </filter>
+            
+            <filter id="faceShadow" x="-50%" y="-50%" width="200%" height="200%">
+              <feDropShadow dx="1" dy="2" stdDeviation="2" floodColor="#000000" floodOpacity="0.2"/>
+            </filter>
+            
+            <filter id="nameTagShadow" x="-50%" y="-50%" width="200%" height="200%">
+              <feDropShadow dx="2" dy="3" stdDeviation="4" floodColor="#000000" floodOpacity="0.4"/>
+            </filter>
+            
+            <filter id="textShadow" x="-50%" y="-50%" width="200%" height="200%">
+              <feDropShadow dx="1" dy="1" stdDeviation="1" floodColor="#000000" floodOpacity="0.5"/>
+            </filter>
           </defs>
 
-          {/* Beautiful grass background */}
-          <rect width={MAP_WIDTH} height={MAP_HEIGHT} fill="url(#grassTexture)" />
+          {/* Enhanced Beautiful Background Layers */}
           
-          {/* Maze walls - creating a beautiful maze layout */}
+          {/* Sky background layer */}
+          <rect width={MAP_WIDTH} height={MAP_HEIGHT * 0.6} fill="url(#skyGradient)" />
+          
+          {/* Animated clouds layer */}
+          <g className="clouds">
+            <rect x="0" y="0" width={MAP_WIDTH} height={MAP_HEIGHT * 0.6} fill="url(#cloudPattern)" opacity="0.8">
+              <animateTransform attributeName="transform" type="translate" 
+                dur="120s" values={`-400,0; ${MAP_WIDTH},0; -400,0`} repeatCount="indefinite"/>
+            </rect>
+            <rect x="200" y="20" width={MAP_WIDTH} height={MAP_HEIGHT * 0.5} fill="url(#cloudPattern)" opacity="0.6">
+              <animateTransform attributeName="transform" type="translate" 
+                dur="80s" values={`-300,0; ${MAP_WIDTH + 200},0; -300,0`} repeatCount="indefinite"/>
+            </rect>
+          </g>
+          
+          {/* Ground/grass background with gradient */}
+          <rect x="0" y={MAP_HEIGHT * 0.6} width={MAP_WIDTH} height={MAP_HEIGHT * 0.4} fill="url(#groundGradient)" />
+          <rect width={MAP_WIDTH} height={MAP_HEIGHT} fill="url(#grassTexture)" opacity="0.8" />
+          
+          {/* Sun/light source */}
+          <g className="sun">
+            <circle cx={MAP_WIDTH - 200} cy="100" r="60" fill="#fbbf24" opacity="0.8">
+              <animate attributeName="opacity" values="0.6;1;0.6" dur="8s" repeatCount="indefinite"/>
+            </circle>
+            <circle cx={MAP_WIDTH - 200} cy="100" r="45" fill="#fcd34d" opacity="0.9"/>
+            <circle cx={MAP_WIDTH - 200} cy="100" r="30" fill="#fef3c7" opacity="1"/>
+            
+            {/* Sun rays */}
+            <g opacity="0.5">
+              <line x1={MAP_WIDTH - 200} y1="20" x2={MAP_WIDTH - 200} y2="40" stroke="#fbbf24" strokeWidth="3" strokeLinecap="round">
+                <animateTransform attributeName="transform" type="rotate" 
+                  dur="20s" values={`0 ${MAP_WIDTH - 200} 100; 360 ${MAP_WIDTH - 200} 100`} repeatCount="indefinite"/>
+              </line>
+              <line x1={MAP_WIDTH - 140} y1="40" x2={MAP_WIDTH - 155} y2="55" stroke="#fbbf24" strokeWidth="2" strokeLinecap="round">
+                <animateTransform attributeName="transform" type="rotate" 
+                  dur="20s" values={`0 ${MAP_WIDTH - 200} 100; 360 ${MAP_WIDTH - 200} 100`} repeatCount="indefinite"/>
+              </line>
+              <line x1={MAP_WIDTH - 120} y1="100" x2={MAP_WIDTH - 140} y2="100" stroke="#fbbf24" strokeWidth="3" strokeLinecap="round">
+                <animateTransform attributeName="transform" type="rotate" 
+                  dur="20s" values={`0 ${MAP_WIDTH - 200} 100; 360 ${MAP_WIDTH - 200} 100`} repeatCount="indefinite"/>
+              </line>
+              <line x1={MAP_WIDTH - 140} y1="160" x2={MAP_WIDTH - 155} y2="145" stroke="#fbbf24" strokeWidth="2" strokeLinecap="round">
+                <animateTransform attributeName="transform" type="rotate" 
+                  dur="20s" values={`0 ${MAP_WIDTH - 200} 100; 360 ${MAP_WIDTH - 200} 100`} repeatCount="indefinite"/>
+              </line>
+              <line x1={MAP_WIDTH - 200} y1="180" x2={MAP_WIDTH - 200} y2="160" stroke="#fbbf24" strokeWidth="3" strokeLinecap="round">
+                <animateTransform attributeName="transform" type="rotate" 
+                  dur="20s" values={`0 ${MAP_WIDTH - 200} 100; 360 ${MAP_WIDTH - 200} 100`} repeatCount="indefinite"/>
+              </line>
+              <line x1={MAP_WIDTH - 260} y1="160" x2={MAP_WIDTH - 245} y2="145" stroke="#fbbf24" strokeWidth="2" strokeLinecap="round">
+                <animateTransform attributeName="transform" type="rotate" 
+                  dur="20s" values={`0 ${MAP_WIDTH - 200} 100; 360 ${MAP_WIDTH - 200} 100`} repeatCount="indefinite"/>
+              </line>
+              <line x1={MAP_WIDTH - 280} y1="100" x2={MAP_WIDTH - 260} y2="100" stroke="#fbbf24" strokeWidth="3" strokeLinecap="round">
+                <animateTransform attributeName="transform" type="rotate" 
+                  dur="20s" values={`0 ${MAP_WIDTH - 200} 100; 360 ${MAP_WIDTH - 200} 100`} repeatCount="indefinite"/>
+              </line>
+              <line x1={MAP_WIDTH - 260} y1="40" x2={MAP_WIDTH - 245} y2="55" stroke="#fbbf24" strokeWidth="2" strokeLinecap="round">
+                <animateTransform attributeName="transform" type="rotate" 
+                  dur="20s" values={`0 ${MAP_WIDTH - 200} 100; 360 ${MAP_WIDTH - 200} 100`} repeatCount="indefinite"/>
+              </line>
+            </g>
+          </g>
+          
+          {/* Maze walls - creating a beautiful maze layout with enhanced shadows */}
           {/* Outer boundary walls */}
-          <rect x="0" y="0" width={MAP_WIDTH} height="30" fill="url(#wallGradient)" rx="15"/>
-          <rect x="0" y="0" width="30" height={MAP_HEIGHT} fill="url(#wallGradient)" rx="15"/>
-          <rect x={MAP_WIDTH-30} y="0" width="30" height={MAP_HEIGHT} fill="url(#wallGradient)" rx="15"/>
-          <rect x="0" y={MAP_HEIGHT-30} width={MAP_WIDTH} height="30" fill="url(#wallGradient)" rx="15"/>
+          <rect x="0" y="0" width={MAP_WIDTH} height="30" fill="url(#wallGradient)" rx="15" filter="url(#dropShadow)"/>
+          <rect x="0" y="0" width="30" height={MAP_HEIGHT} fill="url(#wallGradient)" rx="15" filter="url(#dropShadow)"/>
+          <rect x={MAP_WIDTH-30} y="0" width="30" height={MAP_HEIGHT} fill="url(#wallGradient)" rx="15" filter="url(#dropShadow)"/>
+          <rect x="0" y={MAP_HEIGHT-30} width={MAP_WIDTH} height="30" fill="url(#wallGradient)" rx="15" filter="url(#dropShadow)"/>
           
-          {/* Inner maze walls - creating interesting paths */}
-          <rect x="120" y="80" width="300" height="25" fill="url(#wallGradient)" rx="12"/>
-          <rect x="500" y="120" width="25" height="250" fill="url(#wallGradient)" rx="12"/>
-          <rect x="650" y="60" width="200" height="25" fill="url(#wallGradient)" rx="12"/>
-          <rect x="200" y="320" width="350" height="25" fill="url(#wallGradient)" rx="12"/>
-          <rect x="750" y="200" width="25" height="180" fill="url(#wallGradient)" rx="12"/>
-          <rect x="100" y="480" width="25" height="250" fill="url(#wallGradient)" rx="12"/>
-          <rect x="400" y="450" width="250" height="25" fill="url(#wallGradient)" rx="12"/>
-          <rect x="850" y="350" width="120" height="25" fill="url(#wallGradient)" rx="12"/>
-          <rect x="300" y="600" width="200" height="25" fill="url(#wallGradient)" rx="12"/>
-          <rect x="680" y="520" width="25" height="150" fill="url(#wallGradient)" rx="12"/>
+          {/* Inner maze walls with depth and shadow */}
+          <rect x="120" y="80" width="300" height="25" fill="url(#wallGradient)" rx="12" filter="url(#dropShadow)"/>
+          <rect x="500" y="120" width="25" height="250" fill="url(#wallGradient)" rx="12" filter="url(#dropShadow)"/>
+          <rect x="650" y="60" width="200" height="25" fill="url(#wallGradient)" rx="12" filter="url(#dropShadow)"/>
+          <rect x="200" y="320" width="350" height="25" fill="url(#wallGradient)" rx="12" filter="url(#dropShadow)"/>
+          <rect x="750" y="200" width="25" height="180" fill="url(#wallGradient)" rx="12" filter="url(#dropShadow)"/>
+          <rect x="100" y="480" width="25" height="250" fill="url(#wallGradient)" rx="12" filter="url(#dropShadow)"/>
+          <rect x="400" y="450" width="250" height="25" fill="url(#wallGradient)" rx="12" filter="url(#dropShadow)"/>
+          <rect x="850" y="350" width="120" height="25" fill="url(#wallGradient)" rx="12" filter="url(#dropShadow)"/>
+          <rect x="300" y="600" width="200" height="25" fill="url(#wallGradient)" rx="12" filter="url(#dropShadow)"/>
+          <rect x="680" y="520" width="25" height="150" fill="url(#wallGradient)" rx="12" filter="url(#dropShadow)"/>
           
-          {/* Beautiful decorative trees */}
+          {/* Additional decorative walls for more interesting maze */}
+          <rect x="1200" y="400" width="150" height="25" fill="url(#wallGradient)" rx="12" filter="url(#dropShadow)"/>
+          <rect x="800" y="680" width="200" height="25" fill="url(#wallGradient)" rx="12" filter="url(#dropShadow)"/>
+          <rect x="1400" y="200" width="25" height="300" fill="url(#wallGradient)" rx="12" filter="url(#dropShadow)"/>
+          <rect x="600" y="800" width="25" height="150" fill="url(#wallGradient)" rx="12" filter="url(#dropShadow)"/>
+          
+          {/* Light rays effect from sun */}
+          <g className="light-rays" opacity="0.3">
+            <polygon points={`${MAP_WIDTH - 200},100 200,600 250,620 ${MAP_WIDTH - 180},120`} fill="#fbbf24" opacity="0.1"/>
+            <polygon points={`${MAP_WIDTH - 200},100 400,700 450,720 ${MAP_WIDTH - 170},130`} fill="#fde047" opacity="0.08"/>
+            <polygon points={`${MAP_WIDTH - 200},100 800,800 850,820 ${MAP_WIDTH - 150},150`} fill="#fef3c7" opacity="0.06"/>
+            <polygon points={`${MAP_WIDTH - 200},100 1200,850 1250,870 ${MAP_WIDTH - 130},170`} fill="#fffbeb" opacity="0.04"/>
+          </g>
+          
+          {/* Enhanced Beautiful decorative trees and nature elements */}
           <g className="trees">
-            {/* Large tree 1 */}
+            {/* Large majestic tree 1 */}
             <g transform="translate(380,280)">
-              <ellipse cx="0" cy="35" rx="8" ry="4" fill="#00000020"/>
-              <rect x="-6" y="15" width="12" height="40" fill="#8b4513" rx="3"/>
-              <circle cx="0" cy="-5" r="35" fill="url(#leafGradient)"/>
-              <circle cx="-12" cy="-15" r="22" fill="#22c55e" opacity="0.8"/>
-              <circle cx="15" cy="-10" r="18" fill="#16a34a" opacity="0.9"/>
-              <circle cx="0" cy="-25" r="15" fill="#34d399" opacity="0.7"/>
+              <ellipse cx="0" cy="40" rx="12" ry="6" fill="#00000030"/>
+              <rect x="-8" y="15" width="16" height="50" fill="url(#trunkGradient)" rx="4" filter="url(#dropShadow)"/>
+              <circle cx="0" cy="-5" r="40" fill="url(#leafGradient)" filter="url(#dropShadow)"/>
+              <circle cx="-15" cy="-20" r="28" fill="#22c55e" opacity="0.8"/>
+              <circle cx="20" cy="-15" r="22" fill="#16a34a" opacity="0.9"/>
+              <circle cx="0" cy="-30" r="18" fill="#34d399" opacity="0.7"/>
+              <circle cx="-8" cy="-8" r="12" fill="#10b981" opacity="0.8"/>
+              
+              {/* Swaying animation */}
+              <animateTransform attributeName="transform" type="rotate" 
+                dur="6s" values="-1 0 65; 1 0 65; -1 0 65" repeatCount="indefinite"/>
             </g>
             
-            {/* Tree 2 */}
+            {/* Elegant tree 2 */}
             <g transform="translate(900,180)">
-              <ellipse cx="0" cy="25" rx="6" ry="3" fill="#00000020"/>
-              <rect x="-4" y="10" width="8" height="30" fill="#8b4513" rx="2"/>
-              <circle cx="0" cy="-5" r="25" fill="url(#leafGradient)"/>
-              <circle cx="-8" cy="-12" r="15" fill="#16a34a" opacity="0.8"/>
+              <ellipse cx="0" cy="30" rx="8" ry="4" fill="#00000025"/>
+              <rect x="-5" y="10" width="10" height="35" fill="url(#trunkGradient)" rx="3"/>
+              <circle cx="0" cy="-8" r="30" fill="url(#leafGradient)"/>
+              <circle cx="-12" cy="-18" r="20" fill="#16a34a" opacity="0.8"/>
+              <circle cx="15" cy="-12" r="16" fill="#22c55e" opacity="0.9"/>
+              
+              <animateTransform attributeName="transform" type="rotate" 
+                dur="8s" values="1 0 45; -1 0 45; 1 0 45" repeatCount="indefinite"/>
             </g>
             
-            {/* Tree 3 */}
+            {/* Grand tree 3 */}
             <g transform="translate(280,580)">
-              <ellipse cx="0" cy="40" rx="10" ry="5" fill="#00000020"/>
-              <rect x="-8" y="20" width="16" height="45" fill="#8b4513" rx="4"/>
-              <circle cx="0" cy="-10" r="40" fill="url(#leafGradient)"/>
-              <circle cx="-15" cy="-20" r="25" fill="#22c55e" opacity="0.8"/>
-              <circle cx="18" cy="-15" r="20" fill="#16a34a" opacity="0.9"/>
+              <ellipse cx="0" cy="45" rx="14" ry="7" fill="#00000030"/>
+              <rect x="-10" y="20" width="20" height="55" fill="url(#trunkGradient)" rx="5" filter="url(#dropShadow)"/>
+              <circle cx="0" cy="-10" r="45" fill="url(#leafGradient)" filter="url(#dropShadow)"/>
+              <circle cx="-20" cy="-25" r="30" fill="#22c55e" opacity="0.8"/>
+              <circle cx="25" cy="-20" r="25" fill="#16a34a" opacity="0.9"/>
+              <circle cx="0" cy="-35" r="20" fill="#34d399" opacity="0.7"/>
+              
+              <animateTransform attributeName="transform" type="rotate" 
+                dur="7s" values="-1.5 0 75; 1.5 0 75; -1.5 0 75" repeatCount="indefinite"/>
             </g>
             
-            {/* Tree 4 */}
+            {/* Charming tree 4 */}
             <g transform="translate(1000,480)">
+              <ellipse cx="0" cy="32" rx="9" ry="4" fill="#00000025"/>
+              <rect x="-6" y="12" width="12" height="38" fill="url(#trunkGradient)" rx="3"/>
+              <circle cx="0" cy="-8" r="32" fill="url(#leafGradient)"/>
+              <circle cx="-14" cy="-20" r="22" fill="#22c55e" opacity="0.8"/>
+              <circle cx="16" cy="-15" r="18" fill="#16a34a" opacity="0.9"/>
+              
+              <animateTransform attributeName="transform" type="rotate" 
+                dur="9s" values="1.2 0 50; -1.2 0 50; 1.2 0 50" repeatCount="indefinite"/>
+            </g>
+            
+            {/* Small decorative tree 5 */}
+            <g transform="translate(1500,350)">
+              <ellipse cx="0" cy="25" rx="6" ry="3" fill="#00000020"/>
+              <rect x="-3" y="8" width="6" height="25" fill="url(#trunkGradient)" rx="2"/>
+              <circle cx="0" cy="-5" r="22" fill="url(#leafGradient)"/>
+              <circle cx="-8" cy="-12" r="14" fill="#16a34a" opacity="0.8"/>
+              
+              <animateTransform attributeName="transform" type="rotate" 
+                dur="5s" values="-1 0 33; 1 0 33; -1 0 33" repeatCount="indefinite"/>
+            </g>
+            
+            {/* Young tree 6 */}
+            <g transform="translate(650,750)">
               <ellipse cx="0" cy="28" rx="7" ry="3" fill="#00000020"/>
-              <rect x="-5" y="12" width="10" height="32" fill="#8b4513" rx="3"/>
-              <circle cx="0" cy="-8" r="28" fill="url(#leafGradient)"/>
-              <circle cx="-10" cy="-18" r="18" fill="#22c55e" opacity="0.8"/>
+              <rect x="-4" y="10" width="8" height="30" fill="url(#trunkGradient)" rx="2"/>
+              <circle cx="0" cy="-6" r="25" fill="url(#leafGradient)"/>
+              <circle cx="-10" cy="-15" r="16" fill="#22c55e" opacity="0.8"/>
+              
+              <animateTransform attributeName="transform" type="rotate" 
+                dur="6s" values="1.5 0 40; -1.5 0 40; 1.5 0 40" repeatCount="indefinite"/>
             </g>
           </g>
 
-          {/* Beautiful Question Spots */}
+          {/* Decorative flowers and plants */}
+          <g className="flowers">
+            {/* Flower patch 1 */}
+            <g transform="translate(450,400)">
+              <circle cx="0" cy="0" r="4" fill="url(#flowerGradient1)"/>
+              <circle cx="0" cy="0" r="2" fill="#fef3c7"/>
+              <circle cx="8" cy="5" r="3" fill="url(#flowerGradient2)"/>
+              <circle cx="8" cy="5" r="1.5" fill="#fce7f3"/>
+              <circle cx="-5" cy="8" r="3.5" fill="url(#flowerGradient3)"/>
+              <circle cx="-5" cy="8" r="1.8" fill="#dbeafe"/>
+              
+              {/* Gentle swaying */}
+              <animateTransform attributeName="transform" type="rotate" 
+                dur="4s" values="-2 0 0; 2 0 0; -2 0 0" repeatCount="indefinite"/>
+            </g>
+            
+            {/* Flower patch 2 */}
+            <g transform="translate(800,600)">
+              <circle cx="0" cy="0" r="3.5" fill="url(#flowerGradient2)"/>
+              <circle cx="0" cy="0" r="1.8" fill="#fce7f3"/>
+              <circle cx="10" cy="-3" r="4" fill="url(#flowerGradient1)"/>
+              <circle cx="10" cy="-3" r="2" fill="#fef3c7"/>
+              <circle cx="-6" cy="6" r="3" fill="url(#flowerGradient3)"/>
+              <circle cx="-6" cy="6" r="1.5" fill="#dbeafe"/>
+              
+              <animateTransform attributeName="transform" type="rotate" 
+                dur="5s" values="2 0 0; -2 0 0; 2 0 0" repeatCount="indefinite"/>
+            </g>
+            
+            {/* Flower patch 3 */}
+            <g transform="translate(1200,250)">
+              <circle cx="0" cy="0" r="4.5" fill="url(#flowerGradient3)"/>
+              <circle cx="0" cy="0" r="2.2" fill="#dbeafe"/>
+              <circle cx="12" cy="4" r="3.8" fill="url(#flowerGradient1)"/>
+              <circle cx="12" cy="4" r="1.9" fill="#fef3c7"/>
+              <circle cx="-8" cy="7" r="3.2" fill="url(#flowerGradient2)"/>
+              <circle cx="-8" cy="7" r="1.6" fill="#fce7f3"/>
+              
+              <animateTransform attributeName="transform" type="rotate" 
+                dur="3.5s" values="-1.5 0 0; 1.5 0 0; -1.5 0 0" repeatCount="indefinite"/>
+            </g>
+            
+            {/* Small scattered flowers */}
+            <circle cx="320" cy="450" r="2" fill="url(#flowerGradient1)"/>
+            <circle cx="320" cy="450" r="1" fill="#fef3c7"/>
+            
+            <circle cx="1350" cy="550" r="2.5" fill="url(#flowerGradient2)"/>
+            <circle cx="1350" cy="550" r="1.2" fill="#fce7f3"/>
+            
+            <circle cx="750" cy="150" r="2.2" fill="url(#flowerGradient3)"/>
+            <circle cx="750" cy="150" r="1.1" fill="#dbeafe"/>
+            
+            <circle cx="1600" cy="700" r="1.8" fill="url(#flowerGradient1)"/>
+            <circle cx="1600" cy="700" r="0.9" fill="#fef3c7"/>
+          </g>
+
+          {/* Decorative bushes */}
+          <g className="bushes">
+            <g transform="translate(600,350)">
+              <ellipse cx="0" cy="8" rx="8" ry="3" fill="#00000020"/>
+              <circle cx="0" cy="0" r="15" fill="#16a34a" opacity="0.9"/>
+              <circle cx="-6" cy="-3" r="10" fill="#22c55e" opacity="0.8"/>
+              <circle cx="8" cy="-2" r="12" fill="#10b981" opacity="0.7"/>
+              
+              <animateTransform attributeName="transform" type="scale" 
+                dur="6s" values="1,1; 1.02,0.98; 1,1" repeatCount="indefinite"/>
+            </g>
+            
+            <g transform="translate(1100,650)">
+              <ellipse cx="0" cy="6" rx="6" ry="2" fill="#00000020"/>
+              <circle cx="0" cy="0" r="12" fill="#16a34a" opacity="0.9"/>
+              <circle cx="-4" cy="-2" r="8" fill="#22c55e" opacity="0.8"/>
+              <circle cx="6" cy="-1" r="9" fill="#10b981" opacity="0.7"/>
+              
+              <animateTransform attributeName="transform" type="scale" 
+                dur="8s" values="1,1; 1.01,0.99; 1,1" repeatCount="indefinite"/>
+            </g>
+          </g>
+
+          {/* Floating magical effects */}
+          <g className="magical-effects">
+            {/* Floating light orbs */}
+            <circle cx="150" cy="200" r="4" fill="#fbbf24" opacity="0.7">
+              <animateTransform attributeName="transform" type="translate" 
+                dur="12s" values="0,0; 20,-30; 0,0" repeatCount="indefinite"/>
+              <animate attributeName="opacity" values="0.7;0.3;0.7" dur="3s" repeatCount="indefinite"/>
+            </circle>
+            
+            <circle cx="800" cy="300" r="3" fill="#60a5fa" opacity="0.6">
+              <animateTransform attributeName="transform" type="translate" 
+                dur="15s" values="0,0; -25,-40; 0,0" repeatCount="indefinite"/>
+              <animate attributeName="opacity" values="0.6;0.2;0.6" dur="4s" repeatCount="indefinite"/>
+            </circle>
+            
+            <circle cx="1200" cy="400" r="3.5" fill="#34d399" opacity="0.8">
+              <animateTransform attributeName="transform" type="translate" 
+                dur="10s" values="0,0; 15,-35; 0,0" repeatCount="indefinite"/>
+              <animate attributeName="opacity" values="0.8;0.4;0.8" dur="2.5s" repeatCount="indefinite"/>
+            </circle>
+            
+            <circle cx="400" cy="650" r="2.5" fill="#ec4899" opacity="0.5">
+              <animateTransform attributeName="transform" type="translate" 
+                dur="14s" values="0,0; -18,-28; 0,0" repeatCount="indefinite"/>
+              <animate attributeName="opacity" values="0.5;0.1;0.5" dur="3.5s" repeatCount="indefinite"/>
+            </circle>
+            
+            <circle cx="1500" cy="180" r="4.5" fill="#f59e0b" opacity="0.6">
+              <animateTransform attributeName="transform" type="translate" 
+                dur="11s" values="0,0; 22,-32; 0,0" repeatCount="indefinite"/>
+              <animate attributeName="opacity" values="0.6;0.2;0.6" dur="4.5s" repeatCount="indefinite"/>
+            </circle>
+            
+            {/* Floating bubbles */}
+            <circle cx="600" cy="500" r="6" fill="none" stroke="#ffffff" strokeWidth="1" opacity="0.4">
+              <animateTransform attributeName="transform" type="translate" 
+                dur="20s" values="0,0; 40,-80; 0,0" repeatCount="indefinite"/>
+              <animate attributeName="opacity" values="0.4;0.1;0.4" dur="5s" repeatCount="indefinite"/>
+              <animateTransform attributeName="transform" type="scale" 
+                dur="6s" values="1; 1.3; 1" repeatCount="indefinite" additive="sum"/>
+            </circle>
+            
+            <circle cx="1000" cy="300" r="8" fill="none" stroke="#8b5cf6" strokeWidth="1.5" opacity="0.3">
+              <animateTransform attributeName="transform" type="translate" 
+                dur="25s" values="0,0; -35,-90; 0,0" repeatCount="indefinite"/>
+              <animate attributeName="opacity" values="0.3;0.05;0.3" dur="6s" repeatCount="indefinite"/>
+              <animateTransform attributeName="transform" type="scale" 
+                dur="8s" values="1; 1.5; 1" repeatCount="indefinite" additive="sum"/>
+            </circle>
+            
+            <circle cx="300" cy="750" r="5" fill="none" stroke="#10b981" strokeWidth="1.2" opacity="0.5">
+              <animateTransform attributeName="transform" type="translate" 
+                dur="18s" values="0,0; 30,-70; 0,0" repeatCount="indefinite"/>
+              <animate attributeName="opacity" values="0.5;0.1;0.5" dur="4s" repeatCount="indefinite"/>
+              <animateTransform attributeName="transform" type="scale" 
+                dur="7s" values="1; 1.4; 1" repeatCount="indefinite" additive="sum"/>
+            </circle>
+            
+            {/* Sparkling dust */}
+            <circle cx="700" cy="250" r="1" fill="#fde047" opacity="0.8">
+              <animate attributeName="opacity" values="0.8;0;0.8" dur="2s" repeatCount="indefinite"/>
+              <animateTransform attributeName="transform" type="translate" 
+                dur="8s" values="0,0; 10,-20; 0,0" repeatCount="indefinite"/>
+            </circle>
+            
+            <circle cx="1300" cy="600" r="1.5" fill="#a78bfa" opacity="0.7">
+              <animate attributeName="opacity" values="0.7;0;0.7" dur="2.5s" repeatCount="indefinite"/>
+              <animateTransform attributeName="transform" type="translate" 
+                dur="9s" values="0,0; -12,-25; 0,0" repeatCount="indefinite"/>
+            </circle>
+            
+            <circle cx="200" cy="450" r="1.2" fill="#fb7185" opacity="0.6">
+              <animate attributeName="opacity" values="0.6;0;0.6" dur="3s" repeatCount="indefinite"/>
+              <animateTransform attributeName="transform" type="translate" 
+                dur="7s" values="0,0; 8,-18; 0,0" repeatCount="indefinite"/>
+            </circle>
+          </g>
+
+          {/* Maze walls with enhanced styling */}
           {questionSpots.map((spot) => {
             const isAnswered = playerProgress.answered.includes(spot.id);
             const spotX = (spot.x / MAP_WIDTH) * MAP_WIDTH;
@@ -784,7 +1374,7 @@ export default function MapGame() {
                 <circle
                   cx={spotX}
                   cy={spotY}
-                  r={40}
+                  r={48}
                   fill={isAnswered ? "#10b981" : "#3b82f6"}
                   opacity="0.15"
                   filter="url(#questionGlow)"
@@ -794,10 +1384,10 @@ export default function MapGame() {
                 <circle
                   cx={spotX}
                   cy={spotY}
-                  r={28}
+                  r={32}
                   fill={isAnswered ? "#10b981" : "#3b82f6"}
                   stroke="#ffffff"
-                  strokeWidth="4"
+                  strokeWidth="5"
                   className="cursor-pointer"
                 />
                 
@@ -805,7 +1395,7 @@ export default function MapGame() {
                 <circle
                   cx={spotX}
                   cy={spotY}
-                  r={22}
+                  r={26}
                   fill={isAnswered ? "#34d399" : "#60a5fa"}
                   opacity="0.9"
                   className="cursor-pointer"
@@ -814,9 +1404,9 @@ export default function MapGame() {
                 {/* Question icon or checkmark */}
                 <text
                   x={spotX}
-                  y={spotY + 8}
+                  y={spotY + 10}
                   textAnchor="middle"
-                  fontSize="24"
+                  fontSize="28"
                   fontWeight="bold"
                   fill="white"
                   className="cursor-pointer select-none"
@@ -841,62 +1431,236 @@ export default function MapGame() {
             );
           })}
 
-          {/* Other Players with cute design */}
+          {/* Other Players with enhanced design */}
           {Object.values(otherPlayers).map((player) => {
             const playerX = (player.x / MAP_WIDTH) * MAP_WIDTH;
             const playerY = (player.y / MAP_HEIGHT) * MAP_HEIGHT;
             
             return (
-              <g key={player.playerId} className="other-player">
-                {/* Player shadow */}
-                <ellipse cx={playerX} cy={playerY + 25} rx="15" ry="8" fill="#000000" opacity="0.2"/>
+              <g key={player.playerId} className="other-player character-bob">
+                {/* Player shadow with depth */}
+                <ellipse cx={playerX} cy={playerY + 28} rx="20" ry="12" fill="url(#shadowGradient)" opacity="0.35"/>
                 
-                {/* Player body */}
-                <circle cx={playerX} cy={playerY} r="20" fill="#ff6b6b" stroke="#ffffff" strokeWidth="3"/>
+                {/* Subtle glow effect */}
+                <circle cx={playerX} cy={playerY} r="30" fill="#8b5cf6" opacity="0.1" className="glow-pulse"/>
                 
-                {/* Player face */}
-                <circle cx={playerX - 6} cy={playerY - 4} r="3" fill="#ffffff"/>
-                <circle cx={playerX + 6} cy={playerY - 4} r="3" fill="#ffffff"/>
-                <path d={`M ${playerX - 6} ${playerY + 8} Q ${playerX} ${playerY + 12} ${playerX + 6} ${playerY + 8}`} 
-                      stroke="#ffffff" strokeWidth="2.5" fill="none"/>
+                {/* Player body with enhanced styling */}
+                <circle cx={playerX} cy={playerY} r="24" fill="url(#otherPlayerOutlineGradient)" 
+                        stroke="#ffffff" strokeWidth="2.5" filter="url(#dropShadow)"/>
+                <circle cx={playerX} cy={playerY} r="21" fill="url(#otherPlayerBodyGradient)" 
+                        stroke="url(#bodyBorderGradient)" strokeWidth="1.5"/>
                 
-                {/* Player name tag */}
-                <rect x={playerX - 30} y={playerY - 45} width="60" height="25" 
-                      fill="#ffffff" stroke="#e5e7eb" strokeWidth="1" rx="12" opacity="0.95"/>
-                <text x={playerX} y={playerY - 26} textAnchor="middle" fontSize="12" 
-                      fontWeight="bold" fill="#374151">{player.name || 'Player'}</text>
+                {/* Player face with better lighting */}
+                <circle cx={playerX} cy={playerY - 6} r="16" fill="url(#otherFaceGradient)" 
+                        stroke="url(#faceBorderGradient)" strokeWidth="1.5" filter="url(#faceShadow)"/>
+                
+                {/* Enhanced eyes */}
+                <g className="eyes">
+                  <circle cx={playerX - 6} cy={playerY - 10} r="3.5" fill="#1f2937"/>
+                  <circle cx={playerX + 6} cy={playerY - 10} r="3.5" fill="#1f2937"/>
+                  <circle cx={playerX - 5} cy={playerY - 11} r="1.8" fill="#ffffff"/>
+                  <circle cx={playerX + 7} cy={playerY - 11} r="1.8" fill="#ffffff"/>
+                  <circle cx={playerX - 4} cy={playerY - 12} r="0.6" fill="#34d399"/>
+                  <circle cx={playerX + 8} cy={playerY - 12} r="0.6" fill="#34d399"/>
+                </g>
+                
+                {/* Enhanced smile */}
+                <path d={`M ${playerX - 6} ${playerY + 1} Q ${playerX} ${playerY + 4} ${playerX + 6} ${playerY + 1}`} 
+                      stroke="#dc2626" strokeWidth="2" fill="#fef2f2" strokeLinecap="round"/>
+                
+                {/* Enhanced accessory */}
+                <g className="controller-badge">
+                  <rect x={playerX - 8} y={playerY + 10} width="16" height="10" 
+                        fill="url(#controllerGradient)" stroke="#065f46" strokeWidth="1.2" rx="3"/>
+                  <circle cx={playerX - 4} cy={playerY + 14} r="1.5" fill="#ffffff" opacity="0.9"/>
+                  <circle cx={playerX + 4} cy={playerY + 14} r="1.5" fill="#ffffff" opacity="0.9"/>
+                  <rect x={playerX - 1.5} y={playerY + 12.5} width="3" height="1" fill="#10b981"/>
+                </g>
+                
+                {/* Floating sparkle */}
+                <circle cx={playerX + 18} cy={playerY - 15} r="1.2" fill="#f59e0b" opacity="0.8">
+                  <animateTransform attributeName="transform" type="translate" 
+                    dur="3.5s" values="0,0; -5,-8; 0,0" repeatCount="indefinite"/>
+                </circle>
+                
+                {/* Player name tag with premium styling */}
+                <g className="name-tag">
+                  <rect x={playerX - 40} y={playerY - 80} width="80" height="32" 
+                        fill="url(#otherNameTagGradient)" stroke="url(#nameTagBorderGradient)" 
+                        strokeWidth="2" rx="16" opacity="0.95" filter="url(#nameTagShadow)"/>
+                  <text x={playerX} y={playerY - 60} textAnchor="middle" fontSize="13" 
+                        fontWeight="bold" fill="#ffffff" filter="url(#textShadow)">
+                    {player.name || 'Player'}
+                  </text>
+                  <text x={playerX} y={playerY - 48} textAnchor="middle" fontSize="10" 
+                        fontWeight="bold" fill="#34d399">🎮 Challenger</text>
+                </g>
               </g>
             );
           })}
 
-          {/* Current Player with special design */}
-          <g className="current-player">
-            {/* Player shadow */}
-            <ellipse cx={(position.x / MAP_WIDTH) * MAP_WIDTH} cy={((position.y / MAP_HEIGHT) * MAP_HEIGHT) + 28} rx="18" ry="9" fill="#000000" opacity="0.25"/>
+          {/* Current Player with enhanced game-like design */}
+          <g className={`current-player ${isMoving ? 'character-bob character-pulse' : 'character-pulse'}`}>
+            {/* Player shadow with motion blur */}
+            <ellipse cx={(position.x / MAP_WIDTH) * MAP_WIDTH} cy={((position.y / MAP_HEIGHT) * MAP_HEIGHT) + 35} 
+                     rx="28" ry="15" fill="url(#shadowGradient)" opacity={isMoving ? "0.6" : "0.4"}>
+              {isMoving && (
+                <animateTransform attributeName="transform" type="scale" 
+                  dur="0.6s" values="1,1; 1.1,0.9; 1,1" repeatCount="indefinite"/>
+              )}
+            </ellipse>
             
-            {/* Player glow effect */}
-            <circle cx={(position.x / MAP_WIDTH) * MAP_WIDTH} cy={(position.y / MAP_HEIGHT) * MAP_HEIGHT} r="25" 
-                    fill="#4f46e5" opacity="0.2" filter="url(#playerGlow)"/>
+            {/* Multi-layered glow effect */}
+            <circle cx={(position.x / MAP_WIDTH) * MAP_WIDTH} cy={(position.y / MAP_HEIGHT) * MAP_HEIGHT} 
+                    r="40" fill="#6366f1" opacity={isMoving ? "0.2" : "0.1"} className="glow-pulse" filter="url(#playerGlow)"/>
+            <circle cx={(position.x / MAP_WIDTH) * MAP_WIDTH} cy={(position.y / MAP_HEIGHT) * MAP_HEIGHT} 
+                    r="35" fill="#8b5cf6" opacity={isMoving ? "0.25" : "0.15"} className="glow-pulse" filter="url(#playerGlow)"/>
             
-            {/* Player body */}
-            <circle cx={(position.x / MAP_WIDTH) * MAP_WIDTH} cy={(position.y / MAP_HEIGHT) * MAP_HEIGHT} r="22" 
-                    fill="#4f46e5" stroke="#ffffff" strokeWidth="4"/>
+            {/* Outer ring animation - faster when moving */}
+            <circle cx={(position.x / MAP_WIDTH) * MAP_WIDTH} cy={(position.y / MAP_HEIGHT) * MAP_HEIGHT} 
+                    r="38" fill="none" stroke="url(#rainbowGradient)" strokeWidth="2" strokeDasharray="8,8" opacity="0.7">
+              <animateTransform attributeName="transform" type="rotate" 
+                dur={isMoving ? "2s" : "4s"} values="0;360" repeatCount="indefinite"/>
+            </circle>
             
-            {/* Player face */}
-            <circle cx={(position.x / MAP_WIDTH) * MAP_WIDTH - 7} cy={(position.y / MAP_HEIGHT) * MAP_HEIGHT - 5} r="3.5" fill="#ffffff"/>
-            <circle cx={(position.x / MAP_WIDTH) * MAP_WIDTH + 7} cy={(position.y / MAP_HEIGHT) * MAP_HEIGHT - 5} r="3.5" fill="#ffffff"/>
-            <path d={`M ${(position.x / MAP_WIDTH) * MAP_WIDTH - 7} ${(position.y / MAP_HEIGHT) * MAP_HEIGHT + 10} Q ${(position.x / MAP_WIDTH) * MAP_WIDTH} ${(position.y / MAP_HEIGHT) * MAP_HEIGHT + 15} ${(position.x / MAP_WIDTH) * MAP_WIDTH + 7} ${(position.y / MAP_HEIGHT) * MAP_HEIGHT + 10}`} 
-                  stroke="#ffffff" strokeWidth="3" fill="none"/>
+            {/* Player body outline with premium styling */}
+            <circle cx={(position.x / MAP_WIDTH) * MAP_WIDTH} cy={(position.y / MAP_HEIGHT) * MAP_HEIGHT} r="30" 
+                    fill="url(#bodyOutlineGradient)" stroke="#ffffff" strokeWidth="4" filter="url(#dropShadow)">
+              {isMoving && (
+                <animateTransform attributeName="transform" type="scale" 
+                  dur="0.4s" values="1; 1.02; 1" repeatCount="indefinite"/>
+              )}
+            </circle>
             
-            {/* Crown indicator */}
-            <polygon points={`${(position.x / MAP_WIDTH) * MAP_WIDTH - 10},${(position.y / MAP_HEIGHT) * MAP_HEIGHT - 30} ${(position.x / MAP_WIDTH) * MAP_WIDTH - 5},${(position.y / MAP_HEIGHT) * MAP_HEIGHT - 38} ${(position.x / MAP_WIDTH) * MAP_WIDTH},${(position.y / MAP_HEIGHT) * MAP_HEIGHT - 35} ${(position.x / MAP_WIDTH) * MAP_WIDTH + 5},${(position.y / MAP_HEIGHT) * MAP_HEIGHT - 38} ${(position.x / MAP_WIDTH) * MAP_WIDTH + 10},${(position.y / MAP_HEIGHT) * MAP_HEIGHT - 30}`} 
-                     fill="#fbbf24" stroke="#f59e0b" strokeWidth="1"/>
+            {/* Player main body with enhanced gradient */}
+            <circle cx={(position.x / MAP_WIDTH) * MAP_WIDTH} cy={(position.y / MAP_HEIGHT) * MAP_HEIGHT} r="26" 
+                    fill="url(#playerBodyGradient)" stroke="url(#bodyBorderGradient)" strokeWidth="2"/>
             
-            {/* Player name tag */}
-            <rect x={(position.x / MAP_WIDTH) * MAP_WIDTH - 35} y={(position.y / MAP_HEIGHT) * MAP_HEIGHT - 55} width="70" height="28" 
-                  fill="#4f46e5" stroke="#ffffff" strokeWidth="2" rx="14" opacity="0.95"/>
-            <text x={(position.x / MAP_WIDTH) * MAP_WIDTH} y={(position.y / MAP_HEIGHT) * MAP_HEIGHT - 35} textAnchor="middle" fontSize="13" 
-                  fontWeight="bold" fill="#ffffff">{playerName} (คุณ)</text>
+            {/* Character face background with better lighting */}
+            <circle cx={(position.x / MAP_WIDTH) * MAP_WIDTH} cy={(position.y / MAP_HEIGHT) * MAP_HEIGHT - 8} r="20" 
+                    fill="url(#faceGradient)" stroke="url(#faceBorderGradient)" strokeWidth="2" filter="url(#faceShadow)"/>
+            
+            {/* Enhanced character eyes with reflections */}
+            <g className={`eyes ${isMoving ? 'character-bob' : ''}`}>
+              <circle cx={(position.x / MAP_WIDTH) * MAP_WIDTH - 7} cy={(position.y / MAP_HEIGHT) * MAP_HEIGHT - 12} r="4" fill="#1f2937"/>
+              <circle cx={(position.x / MAP_WIDTH) * MAP_WIDTH + 7} cy={(position.y / MAP_HEIGHT) * MAP_HEIGHT - 12} r="4" fill="#1f2937"/>
+              <circle cx={(position.x / MAP_WIDTH) * MAP_WIDTH - 6} cy={(position.y / MAP_HEIGHT) * MAP_HEIGHT - 13} r="2" fill="#ffffff"/>
+              <circle cx={(position.x / MAP_WIDTH) * MAP_WIDTH + 8} cy={(position.y / MAP_HEIGHT) * MAP_HEIGHT - 13} r="2" fill="#ffffff"/>
+              <circle cx={(position.x / MAP_WIDTH) * MAP_WIDTH - 5} cy={(position.y / MAP_HEIGHT) * MAP_HEIGHT - 14} r="0.8" fill="#60a5fa"/>
+              <circle cx={(position.x / MAP_WIDTH) * MAP_WIDTH + 9} cy={(position.y / MAP_HEIGHT) * MAP_HEIGHT - 14} r="0.8" fill="#60a5fa"/>
+              {/* Blinking animation */}
+              {isMoving && (
+                <>
+                  <circle cx={(position.x / MAP_WIDTH) * MAP_WIDTH - 7} cy={(position.y / MAP_HEIGHT) * MAP_HEIGHT - 12} 
+                          r="4" fill="#1f2937" opacity="0">
+                    <animate attributeName="opacity" values="0;0;1;0;0" dur="3s" repeatCount="indefinite"/>
+                  </circle>
+                  <circle cx={(position.x / MAP_WIDTH) * MAP_WIDTH + 7} cy={(position.y / MAP_HEIGHT) * MAP_HEIGHT - 12} 
+                          r="4" fill="#1f2937" opacity="0">
+                    <animate attributeName="opacity" values="0;0;1;0;0" dur="3s" repeatCount="indefinite"/>
+                  </circle>
+                </>
+              )}
+            </g>
+            
+            {/* Enhanced character smile */}
+            <path d={`M ${(position.x / MAP_WIDTH) * MAP_WIDTH - 8} ${(position.y / MAP_HEIGHT) * MAP_HEIGHT - 2} 
+                     Q ${(position.x / MAP_WIDTH) * MAP_WIDTH} ${(position.y / MAP_HEIGHT) * MAP_HEIGHT + 3} 
+                     ${(position.x / MAP_WIDTH) * MAP_WIDTH + 8} ${(position.y / MAP_HEIGHT) * MAP_HEIGHT - 2}`} 
+                  stroke="#dc2626" strokeWidth="2.5" fill="#fef2f2" strokeLinecap="round"/>
+            
+            {/* Character accessories - enhanced game controller badge */}
+            <g className={`controller-badge ${isMoving ? 'character-pulse' : 'character-pulse'}`}>
+              <rect x={(position.x / MAP_WIDTH) * MAP_WIDTH - 10} y={(position.y / MAP_HEIGHT) * MAP_HEIGHT + 14} 
+                    width="20" height="12" fill="url(#controllerGradient)" stroke="#065f46" strokeWidth="1.5" rx="4"/>
+              <circle cx={(position.x / MAP_WIDTH) * MAP_WIDTH - 5} cy={(position.y / MAP_HEIGHT) * MAP_HEIGHT + 19} 
+                      r="2" fill="#ffffff" opacity="0.9">
+                {isMoving && (
+                  <animate attributeName="opacity" values="0.9;0.5;0.9" dur="0.5s" repeatCount="indefinite"/>
+                )}
+              </circle>
+              <circle cx={(position.x / MAP_WIDTH) * MAP_WIDTH + 5} cy={(position.y / MAP_HEIGHT) * MAP_HEIGHT + 19} 
+                      r="2" fill="#ffffff" opacity="0.9">
+                {isMoving && (
+                  <animate attributeName="opacity" values="0.5;0.9;0.5" dur="0.5s" repeatCount="indefinite"/>
+                )}
+              </circle>
+              <rect x={(position.x / MAP_WIDTH) * MAP_WIDTH - 2} y={(position.y / MAP_HEIGHT) * MAP_HEIGHT + 17} 
+                    width="4" height="1" fill="#10b981"/>
+            </g>
+            
+            {/* Floating sparkle effects */}
+            <g className={`sparkles ${isMoving ? 'sparkle-rotate' : ''}`}>
+              <circle cx={(position.x / MAP_WIDTH) * MAP_WIDTH - 25} cy={(position.y / MAP_HEIGHT) * MAP_HEIGHT - 20} 
+                      r="2" fill="#fbbf24">
+                <animateTransform attributeName="transform" type="translate" 
+                  dur={isMoving ? "2s" : "3s"} values="0,0; 8,-12; 0,0" repeatCount="indefinite"/>
+              </circle>
+              <circle cx={(position.x / MAP_WIDTH) * MAP_WIDTH + 28} cy={(position.y / MAP_HEIGHT) * MAP_HEIGHT - 15} 
+                      r="1.5" fill="#f59e0b">
+                <animateTransform attributeName="transform" type="translate" 
+                  dur={isMoving ? "1.8s" : "2.8s"} values="0,0; -6,-10; 0,0" repeatCount="indefinite"/>
+              </circle>
+              <circle cx={(position.x / MAP_WIDTH) * MAP_WIDTH + 15} cy={(position.y / MAP_HEIGHT) * MAP_HEIGHT + 25} 
+                      r="1" fill="#60a5fa">
+                <animateTransform attributeName="transform" type="translate" 
+                  dur={isMoving ? "2.2s" : "3.2s"} values="0,0; -4,8; 0,0" repeatCount="indefinite"/>
+              </circle>
+              {/* Extra sparkles when moving */}
+              {isMoving && (
+                <>
+                  <circle cx={(position.x / MAP_WIDTH) * MAP_WIDTH - 35} cy={(position.y / MAP_HEIGHT) * MAP_HEIGHT + 10} 
+                          r="1" fill="#34d399">
+                    <animateTransform attributeName="transform" type="translate" 
+                      dur="1.5s" values="0,0; 6,-15; 0,0" repeatCount="indefinite"/>
+                    <animate attributeName="opacity" values="0;1;0" dur="1.5s" repeatCount="indefinite"/>
+                  </circle>
+                  <circle cx={(position.x / MAP_WIDTH) * MAP_WIDTH + 35} cy={(position.y / MAP_HEIGHT) * MAP_HEIGHT + 5} 
+                          r="1.2" fill="#ec4899">
+                    <animateTransform attributeName="transform" type="translate" 
+                      dur="1.7s" values="0,0; -8,-12; 0,0" repeatCount="indefinite"/>
+                    <animate attributeName="opacity" values="0;1;0" dur="1.7s" repeatCount="indefinite"/>
+                  </circle>
+                </>
+              )}
+            </g>
+            
+            {/* Enhanced crown with premium styling */}
+            <g className="crown character-pulse">
+              <polygon points={`${(position.x / MAP_WIDTH) * MAP_WIDTH - 16},${(position.y / MAP_HEIGHT) * MAP_HEIGHT - 42} 
+                               ${(position.x / MAP_WIDTH) * MAP_WIDTH - 8},${(position.y / MAP_HEIGHT) * MAP_HEIGHT - 54} 
+                               ${(position.x / MAP_WIDTH) * MAP_WIDTH},${(position.y / MAP_HEIGHT) * MAP_HEIGHT - 48} 
+                               ${(position.x / MAP_WIDTH) * MAP_WIDTH + 8},${(position.y / MAP_HEIGHT) * MAP_HEIGHT - 54} 
+                               ${(position.x / MAP_WIDTH) * MAP_WIDTH + 16},${(position.y / MAP_HEIGHT) * MAP_HEIGHT - 42}`} 
+                       fill="url(#crownGradient)" stroke="url(#crownBorderGradient)" strokeWidth="2" filter="url(#dropShadow)"/>
+              <circle cx={(position.x / MAP_WIDTH) * MAP_WIDTH} cy={(position.y / MAP_HEIGHT) * MAP_HEIGHT - 46} 
+                      r="3" fill="#dc2626">
+                <animate attributeName="fill" values="#dc2626;#ef4444;#dc2626" dur={isMoving ? "1s" : "2s"} repeatCount="indefinite"/>
+              </circle>
+              <circle cx={(position.x / MAP_WIDTH) * MAP_WIDTH - 8} cy={(position.y / MAP_HEIGHT) * MAP_HEIGHT - 48} 
+                      r="2" fill="#3b82f6">
+                <animate attributeName="fill" values="#3b82f6;#60a5fa;#3b82f6" dur={isMoving ? "1.2s" : "2.5s"} repeatCount="indefinite"/>
+              </circle>
+              <circle cx={(position.x / MAP_WIDTH) * MAP_WIDTH + 8} cy={(position.y / MAP_HEIGHT) * MAP_HEIGHT - 48} 
+                      r="2" fill="#10b981">
+                <animate attributeName="fill" values="#10b981;#34d399;#10b981" dur={isMoving ? "1.1s" : "2.2s"} repeatCount="indefinite"/>
+              </circle>
+            </g>
+            
+            {/* Enhanced name tag with premium styling */}
+            <g className="name-tag">
+              <rect x={(position.x / MAP_WIDTH) * MAP_WIDTH - 52} y={(position.y / MAP_HEIGHT) * MAP_HEIGHT - 120} 
+                    width="104" height="42" fill="url(#nameTagGradient)" stroke="url(#nameTagBorderGradient)" 
+                    strokeWidth="3" rx="21" filter="url(#nameTagShadow)" opacity="0.98"/>
+              <text x={(position.x / MAP_WIDTH) * MAP_WIDTH} y={(position.y / MAP_HEIGHT) * MAP_HEIGHT - 94} 
+                    textAnchor="middle" fontSize="15" fontWeight="bold" fill="#ffffff" filter="url(#textShadow)">
+                {playerName}
+              </text>
+              <text x={(position.x / MAP_WIDTH) * MAP_WIDTH} y={(position.y / MAP_HEIGHT) * MAP_HEIGHT - 80} 
+                    textAnchor="middle" fontSize="12" fontWeight="bold" fill="#fbbf24">
+                ⭐ {isMoving ? 'Moving Master' : 'Master Player'} ⭐
+              </text>
+            </g>
           </g>
         </svg>
       </div>
@@ -1201,10 +1965,10 @@ export default function MapGame() {
             <div />
             <button
               className="pointer-events-auto w-12 h-12 rounded-xl bg-white/90 hover:bg-white shadow border border-white/60 flex items-center justify-center text-gray-700 text-lg"
-              onMouseDown={() => startHold(0, -40)}
+              onMouseDown={() => startHold(0, -KEY_STEP)}
               onMouseUp={stopHold}
               onMouseLeave={stopHold}
-              onTouchStart={(e) => { e.preventDefault(); startHold(0, -40); }}
+              onTouchStart={(e) => { e.preventDefault(); startHold(0, -KEY_STEP); }}
               onTouchEnd={stopHold}
               title="เดินหน้า (W)"
             >W</button>
@@ -1212,28 +1976,28 @@ export default function MapGame() {
 
             <button
               className="pointer-events-auto w-12 h-12 rounded-xl bg-white/90 hover:bg-white shadow border border-white/60 flex items-center justify-center text-gray-700 text-lg"
-              onMouseDown={() => startHold(-40, 0)}
+              onMouseDown={() => startHold(-KEY_STEP, 0)}
               onMouseUp={stopHold}
               onMouseLeave={stopHold}
-              onTouchStart={(e) => { e.preventDefault(); startHold(-40, 0); }}
+              onTouchStart={(e) => { e.preventDefault(); startHold(-KEY_STEP, 0); }}
               onTouchEnd={stopHold}
               title="ซ้าย (A)"
             >A</button>
             <button
               className="pointer-events-auto w-12 h-12 rounded-xl bg-white/90 hover:bg-white shadow border border-white/60 flex items-center justify-center text-gray-700 text-lg"
-              onMouseDown={() => startHold(0, 40)}
+              onMouseDown={() => startHold(0, KEY_STEP)}
               onMouseUp={stopHold}
               onMouseLeave={stopHold}
-              onTouchStart={(e) => { e.preventDefault(); startHold(0, 40); }}
+              onTouchStart={(e) => { e.preventDefault(); startHold(0, KEY_STEP); }}
               onTouchEnd={stopHold}
               title="ถอยหลัง (S)"
             >S</button>
             <button
               className="pointer-events-auto w-12 h-12 rounded-xl bg-white/90 hover:bg-white shadow border border-white/60 flex items-center justify-center text-gray-700 text-lg"
-              onMouseDown={() => startHold(40, 0)}
+              onMouseDown={() => startHold(KEY_STEP, 0)}
               onMouseUp={stopHold}
               onMouseLeave={stopHold}
-              onTouchStart={(e) => { e.preventDefault(); startHold(40, 0); }}
+              onTouchStart={(e) => { e.preventDefault(); startHold(KEY_STEP, 0); }}
               onTouchEnd={stopHold}
               title="ขวา (D)"
             >D</button>

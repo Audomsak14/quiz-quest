@@ -10,39 +10,73 @@ export default function SpectatorSideScroller({ roomId, players = {}, questions 
   const GROUND_H = 120;
   const GROUND_Y = VIEW_H - GROUND_H;
 
-  // Match the student's layout logic
-  const platforms = useMemo(() => ([
-    { x: WORLD_W/2 - 500, y: GROUND_Y - 120, w: 260, h: 18 },
-    { x: WORLD_W/2 + 360, y: GROUND_Y - 170, w: 220, h: 18 },
-    { x: WORLD_W/2 - 900, y: GROUND_Y - 200, w: 280, h: 18 },
-    { x: WORLD_W/2 + 900, y: GROUND_Y - 130, w: 300, h: 18 },
-  ]), [GROUND_Y, WORLD_W]);
+  // ใช้สูตรเดียวกับฝั่งนักเรียนในการวางแท่นและบล็อก (buildSymmetricOffsets + platLevels)
+  function buildSymmetricOffsets(count, gap) {
+    if (count <= 0) return [];
+    const arr = [0];
+    let step = 1;
+    while (arr.length < count) {
+      arr.push(step * gap);
+      if (arr.length >= count) break;
+      arr.push(-step * gap);
+      step++;
+    }
+    return arr;
+  }
 
-  // Derive block positions (same offsets as game client)
-  const blocks = useMemo(() => {
-    const offsets = [-1000, -700, -400, 400, 700, 1000];
-    return (questions || []).slice(0, offsets.length).map((q, i) => ({
-      id: q.id,
-      x: WORLD_W/2 + offsets[i],
-      y: (i % 3 === 0 ? GROUND_Y - 40 : (platforms[i % platforms.length]?.y - 40) || (GROUND_Y - 40)),
-    }));
-  }, [questions, WORLD_W, GROUND_Y, platforms]);
+  const layout = useMemo(() => {
+    const qArr = Array.isArray(questions) ? questions : [];
+    const count = qArr.length || 4;
+    const GAP = 320; const LEFT_PAD = 800; const RIGHT_PAD = 800;
+    const minWorld = 3600;
+    const needed = count > 1 ? (count - 1) * GAP : 0;
+    const world = Math.max(minWorld, LEFT_PAD + RIGHT_PAD + needed + VIEW_W);
+    const center = world / 2;
+    const offsets = buildSymmetricOffsets(count, GAP);
+
+    const platLevels = [
+      { dy: 120, w: 260 },
+      { dy: 150, w: 220 },
+    ];
+
+    const plats = [];
+    const blocks = (qArr.length ? qArr : Array.from({ length: count }).map((_, i) => ({ id: `q${i+1}`, text: `Q${i+1}`, choices: ["A","B","C","D"], answerIndex: i % 4, points: 100 })))
+      .map((q, i) => {
+        const off = offsets[i] || 0;
+        const level = i % 3; // 0 ground, 1/2 platforms
+        let y = GROUND_Y - 40;
+        if (level === 1 || level === 2) {
+          const lvl = platLevels[level - 1];
+          const w = lvl.w; const px = center + off - w / 2; const py = GROUND_Y - lvl.dy;
+          plats.push({ x: px, y: py, w, h: 18 });
+          y = py - 40;
+        }
+        return { id: q.id || `q${i+1}`, x: center + off, y };
+      });
+    return { world, center, plats, blocks };
+  }, [questions, VIEW_W, GROUND_Y]);
+
+  const platforms = layout.plats;
+  const blocks = layout.blocks;
+  const worldUsed = layout.world;
 
   // Fit entire world into the frame (scale down) for overview
-  const scale = Math.min(1, VIEW_W / WORLD_W);
-  const canvasW = WORLD_W * scale;
+  const scale = Math.min(1, VIEW_W / worldUsed);
+  const canvasW = worldUsed * scale;
   const canvasH = VIEW_H;
 
+  // Spectator view is purely driven by props from TeacherGameView (which subscribes to sockets)
+  const effectivePlayers = players || {};
   const selectedPlayer = useMemo(() => {
-    if (!players) return null;
-    if (selectedPlayerId && players[selectedPlayerId]) return players[selectedPlayerId];
-    const vals = Object.values(players);
+    if (!effectivePlayers) return null;
+    if (selectedPlayerId && effectivePlayers[selectedPlayerId]) return effectivePlayers[selectedPlayerId];
+    const vals = Object.values(effectivePlayers);
     return vals.length ? vals[0] : null;
-  }, [players, selectedPlayerId]);
+  }, [effectivePlayers, selectedPlayerId]);
 
   return (
     <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-      <div className="bg-white rounded-3xl shadow-2xl border border-white/20 overflow-hidden w-full max-w-[1300px]">
+  <div className="bg-white rounded-3xl shadow-2xl border border-white/20 overflow-hidden w-full max-w-[1300px]">
         {/* Header */}
         <div className="flex items-center justify-between p-4 bg-gradient-to-r from-indigo-50 to-purple-50 border-b">
           <div className="flex items-center gap-3">
@@ -66,7 +100,7 @@ export default function SpectatorSideScroller({ roomId, players = {}, questions 
         </div>
 
         {/* World */}
-        <div className="relative w-full flex items-center justify-center bg-[#9bd1ff]">
+  <div className="relative w-full flex items-center justify-center bg-[#9bd1ff]">
           {/* Floating name tab for clarity */}
           {selectedPlayer && (
             <div className="absolute top-2 left-2 z-10">
@@ -75,11 +109,11 @@ export default function SpectatorSideScroller({ roomId, players = {}, questions 
               </div>
             </div>
           )}
-          <svg width={canvasW} height={canvasH} viewBox={`0 0 ${WORLD_W} ${VIEW_H}`} className="my-4" style={{ width: canvasW, height: canvasH }}>
+          <svg width={canvasW} height={canvasH} viewBox={`0 0 ${worldUsed} ${VIEW_H}`} className="my-4" style={{ width: canvasW, height: canvasH }}>
             {/* Sky */}
-            <rect x="0" y="0" width={WORLD_W} height={VIEW_H} fill="#9cd3ff" />
+            <rect x="0" y="0" width={worldUsed} height={VIEW_H} fill="#9cd3ff" />
             {/* Ground */}
-            <rect x="0" y={GROUND_Y} width={WORLD_W} height={GROUND_H} fill="#86efac" />
+            <rect x="0" y={GROUND_Y} width={worldUsed} height={GROUND_H} fill="#86efac" />
             {/* Platforms */}
             {platforms.map((p, idx) => (
               <rect key={idx} x={p.x} y={p.y} width={p.w} height={p.h} fill="#8b5cf6" />
@@ -92,13 +126,15 @@ export default function SpectatorSideScroller({ roomId, players = {}, questions 
               </g>
             ))}
             {/* Players */}
-            {Object.values(players).map(p => {
+            {Object.values(effectivePlayers).map(p => {
               const isSelected = selectedPlayerId && p.playerId === selectedPlayerId;
+              // Use exact physics Y from student client so standing under blocks/platforms matches perfectly
+              const ry = p.y;
               return (
                 <g key={p.playerId || p.name}>
-                  {isSelected && <circle cx={p.x} cy={p.y} r="28" fill="#2563eb" opacity="0.25" />}
-                  <circle cx={p.x} cy={p.y} r="18" fill={isSelected ? '#2563eb' : '#ef4444'} />
-                  <text x={p.x} y={p.y - 28} textAnchor="middle" fontSize="12" fontWeight="bold" fill="#111827">{p.name}</text>
+                  {isSelected && <circle cx={p.x} cy={ry} r="28" fill="#2563eb" opacity="0.25" />}
+                  <circle cx={p.x} cy={ry} r="18" fill={isSelected ? '#2563eb' : '#ef4444'} />
+                  <text x={p.x} y={ry - 28} textAnchor="middle" fontSize="12" fontWeight="bold" fill="#111827">{p.name}</text>
                 </g>
               );
             })}

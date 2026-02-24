@@ -64,7 +64,23 @@ export const profileStorage = {
 
   // Avatar image (base64 or URL)
   getImage() {
-    return safe(() => sessionStorage.getItem('playerImage') || '', '');
+    return safe(() => {
+      const raw = sessionStorage.getItem('playerImage') || '';
+      if (!raw) return '';
+
+      // If the stored avatar is one of our built-in sprite sheets, force a
+      // known cache-busting version so asset updates are reflected immediately.
+      const CHARACTER_ASSET_VERSION = '2026-02-24-old';
+      const base = String(raw).split('?')[0];
+      if (
+        base === '/characters/boy-sprite-8x1.svg' ||
+        base === '/characters/girl-sprite-8x1.svg'
+      ) {
+        return `${base}?v=${CHARACTER_ASSET_VERSION}`;
+      }
+
+      return String(raw);
+    }, '');
   },
   setImage(image) {
     safe(() => {
