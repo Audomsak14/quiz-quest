@@ -26,6 +26,18 @@ export default function SideScrollerQuiz() {
   const router = useRouter();
   const searchParams = useSearchParams();
 
+  // Prevent page scroll while in game view
+  useEffect(() => {
+    const prevBodyOverflow = document.body.style.overflow;
+    const prevHtmlOverflow = document.documentElement.style.overflow;
+    document.body.style.overflow = "hidden";
+    document.documentElement.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = prevBodyOverflow;
+      document.documentElement.style.overflow = prevHtmlOverflow;
+    };
+  }, []);
+
   const [roomId] = useState(() => searchParams.get("roomId") || "");
   const [playerName] = useState(() => searchParams.get("playerName") || `Player_${Math.floor(Math.random()*1000)}`);
   const [providedPlayerId] = useState(() => searchParams.get("playerId") || profileStorage.ensureId(playerName) || null);
@@ -1134,8 +1146,8 @@ export default function SideScrollerQuiz() {
 
   // HUD + Canvas + Modals
   return (
-    <div className="min-h-screen bg-gradient-to-br from-emerald-200 to-teal-200 flex flex-col items-center p-4">
-      <div className="w-full max-w-6xl rounded-3xl shadow-xl bg-white/70 backdrop-blur-sm p-3 mb-3 flex items-center justify-between">
+    <div className="h-[100dvh] overflow-hidden bg-gradient-to-br from-emerald-200 to-teal-200 flex flex-col items-center p-3">
+      <div className="w-full max-w-6xl shrink-0 rounded-3xl shadow-xl bg-white/70 backdrop-blur-sm p-3 mb-2 flex items-center justify-between">
         <div className="text-sm text-gray-700 font-semibold">{playerName} • Room: {roomId}</div>
         <div className="text-sm">Score: <span className="font-bold text-emerald-700">{playerProgress.score}</span> • Answered: {playerProgress.answered.length}/{questionSpots.length}</div>
         <div className="flex items-center gap-3">
@@ -1145,7 +1157,7 @@ export default function SideScrollerQuiz() {
         </div>
       </div>
 
-      <div className="w-full max-w-6xl mb-3">
+      <div className="w-full max-w-6xl shrink-0 mb-2">
         <div className="relative h-14">
           <div className="absolute left-0 right-0 top-1/2 -translate-y-1/2 h-3 rounded-full bg-white border border-gray-200 shadow-inner">
             <div className="absolute inset-0 rounded-full bg-gradient-to-r from-emerald-50 via-cyan-50 to-indigo-50" />
@@ -1178,8 +1190,9 @@ export default function SideScrollerQuiz() {
         </div>
       </div>
 
-      <div className="w-full max-w-7xl rounded-3xl overflow-hidden shadow-2xl border border-white/40 bg-[#9bd1ff] relative">
-        <canvas ref={canvasRef} width={VIEW_W} height={VIEW_H} className="w-full h-[700px] block" />
+      <div className="w-full flex-1 min-h-0 flex items-center justify-center">
+        <div className="h-full w-auto max-w-7xl max-h-full aspect-[2/1] rounded-3xl overflow-hidden shadow-2xl border border-white/40 bg-[#9bd1ff] relative">
+          <canvas ref={canvasRef} width={VIEW_W} height={VIEW_H} className="w-full h-full block" />
         {showDebug && (
           <div className="absolute m-2 p-2 top-0 left-1/2 -translate-x-1/2 bg-white/90 text-[11px] text-gray-800 rounded shadow border border-gray-200">
             <div className="font-semibold">Debug</div>
@@ -1194,6 +1207,7 @@ export default function SideScrollerQuiz() {
             <div className="text-gray-500">F3 เพื่อซ่อน/แสดง</div>
           </div>
         )}
+        </div>
       </div>
 
       {!gameStarted && (<div className="mt-4 text-center text-amber-700 bg-amber-100 border border-amber-300 px-4 py-2 rounded-xl">รอครูเริ่มเกมอยู่...</div>)}
