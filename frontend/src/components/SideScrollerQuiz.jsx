@@ -135,24 +135,6 @@ export default function SideScrollerQuiz() {
     inp.jumpHeld = false;
   }, [showQuestion, showRankings]);
 
-  const restartGame = useCallback(() => {
-    completedOnceRef.current = false;
-    setPlayerProgress({ answered: [], score: 0 });
-    setAnsweredStatus({});
-    setShowQuestion(false);
-    setCurrentQuestion(null);
-    setShowRankings(false);
-  setBlocks(prev => (prev || []).map(b => ({ ...b, bounceY: 0, bounceV: 0 })));
-    lastQuestionOpenAtRef.current = 0;
-    setGameStartTime(Date.now());
-    setGameStarted(true);
-    try {
-      posRef.current = { x: worldW / 2, y: GROUND_Y - 40 };
-      velRef.current = { x: 0, y: 0 };
-      cameraXRef.current = Math.max(0, Math.min(worldW - VIEW_W, posRef.current.x - VIEW_W / 2));
-    } catch {}
-  }, [worldW]);
-
   // Redirect helper
   const redirectToLobby = useCallback(() => {
     try { window.sessionStorage.setItem(`qq:kicked:${roomId}`, "1"); } catch {}
@@ -1257,8 +1239,6 @@ export default function SideScrollerQuiz() {
               })}
             </div>
             <div className="mt-5 flex items-center justify-end gap-2">
-              <button onClick={restartGame} className="px-4 py-2 rounded-xl bg-emerald-600 text-white hover:bg-emerald-700 shadow focus:outline-none focus:ring-2 focus:ring-emerald-300">เริ่มอีกครั้ง</button>
-              <button aria-label="ปิดอันดับคะแนน" onClick={() => setShowRankings(false)} className="px-4 py-2 rounded-xl bg-slate-800 text-white hover:bg-slate-900 shadow focus:outline-none focus:ring-2 focus:ring-slate-300">ปิด</button>
               <button onClick={() => router.push('/StudentDashboard/gameroom')} className="px-4 py-2 rounded-xl bg-indigo-600 text-white hover:bg-indigo-700 shadow focus:outline-none focus:ring-2 focus:ring-indigo-300">กลับหน้าห้อง</button>
             </div>
           </div>

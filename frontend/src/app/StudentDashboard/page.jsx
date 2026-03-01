@@ -15,6 +15,14 @@ export default function StudentDashboard() {
   const [tempPlayerName, setTempPlayerName] = useState("");
   const [tempPlayerImage, setTempPlayerImage] = useState(null);
 
+  // History / Stats
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const [historyError, setHistoryError] = useState('');
+  const [history, setHistory] = useState({
+    summary: { totalTests: 0, totalAttempts: 0, averageScore: 0, bestScore: 0 },
+    attempts: [],
+  });
+
   // ฟังก์ชันโหลดข้อมูลตัวละคร
   const loadCharacterData = () => {
     if (typeof window !== 'undefined') {
@@ -123,6 +131,39 @@ export default function StudentDashboard() {
     };
   }, []);
 
+  // Load game history (for stats + recent activities)
+  useEffect(() => {
+    if (!isClient) return;
+
+    const run = async () => {
+      setHistoryLoading(true);
+      setHistoryError('');
+      try {
+        const id = profileStorage.getId();
+        const name = profileStorage.getName() || playerName || '';
+        if (!id && !name) {
+          setHistory({ summary: { totalTests: 0, totalAttempts: 0, averageScore: 0, bestScore: 0 }, attempts: [] });
+          return;
+        }
+        const qs = id ? `playerId=${encodeURIComponent(id)}` : `name=${encodeURIComponent(name)}`;
+        const r = await fetch(`http://localhost:5000/api/game/history?${qs}&limit=200`, { cache: 'no-store' });
+        const data = await r.json();
+        if (!data?.success) throw new Error(data?.error || 'failed');
+        setHistory({
+          summary: data.summary || { totalTests: 0, totalAttempts: 0, averageScore: 0, bestScore: 0 },
+          attempts: Array.isArray(data.attempts) ? data.attempts : [],
+        });
+      } catch (e) {
+        setHistoryError('โหลดสถิติ/กิจกรรมล่าสุดไม่ได้');
+        setHistory({ summary: { totalTests: 0, totalAttempts: 0, averageScore: 0, bestScore: 0 }, attempts: [] });
+      } finally {
+        setHistoryLoading(false);
+      }
+    };
+
+    run();
+  }, [isClient, playerName]);
+
   // เพิ่ม useEffect สำหรับโหลดข้อมูลเมื่อ component mount อีกครั้ง
   useEffect(() => {
     if (isClient) {
@@ -153,6 +194,16 @@ export default function StudentDashboard() {
       router.push('/login');
     }
   };
+
+  // Derived stats
+  const attempts = Array.isArray(history?.attempts) ? history.attempts : [];
+  const totalAttempts = Number.isFinite(history?.summary?.totalAttempts) ? history.summary.totalAttempts : attempts.length;
+  const avgScore = Number.isFinite(history?.summary?.averageScore) ? history.summary.averageScore : 0;
+  const bestRankEntry = attempts
+    .filter(a => Number.isFinite(a?.rank) && Number.isFinite(a?.totalPlayers) && a.rank > 0 && a.totalPlayers > 0)
+    .sort((a, b) => (a.rank - b.rank) || (a.totalPlayers - b.totalPlayers))[0];
+  const rankLabel = bestRankEntry ? `${bestRankEntry.rank}/${bestRankEntry.totalPlayers}` : '-';
+  const recentAttempts = attempts.slice(0, 5);
 
   const handleCharacterSelection = () => {
     router.push('/StudentDashboard/character');
@@ -451,7 +502,7 @@ export default function StudentDashboard() {
       </div>
 
       {/* Main Content Cards */}
-      <div className="relative grid md:grid-cols-3 gap-6 mb-10">
+      <div className="relative grid md:grid-cols-2 gap-6 mb-10">
         {/* แบบทดสอบ */}
         <div className="bg-white/5 backdrop-blur-xl rounded-2xl shadow-2xl p-8 text-center transition-all duration-300 border border-white/10 group hover:shadow-[0_20px_60px_rgba(0,0,0,0.35)] hover:-translate-y-1">
           <div className="w-20 h-20 bg-gradient-to-br from-blue-400 to-purple-600 rounded-full flex items-center justify-center mx-auto mb-4 shadow-lg group-hover:shadow-xl transition-all duration-300">
@@ -466,23 +517,6 @@ export default function StudentDashboard() {
             className="bg-gradient-to-r from-blue-500 to-purple-600 hover:from-blue-600 hover:to-purple-700 text-white font-semibold py-3 px-6 rounded-xl shadow-lg hover:shadow-xl transition-all duration-300 border border-white/20"
           >
             เข้าร่วมแบบทดสอบ
-          </button>
-        </div>
-
-        {/* ผลคะแนน */}
-        <div className="bg-white/5 backdrop-blur-xl rounded-2xl shadow-2xl p-8 text-center transition-all duration-300 border border-white/10 group hover:shadow-[0_20px_60px_rgba(0,0,0,0.35)] hover:-translate-y-1">
-          <div className="w-20 h-20 bg-gradient-to-br from-purple-400 to-pink-600 rounded-full flex items-center justify-center mx-auto mb-4 shadow-lg group-hover:shadow-xl transition-all duration-300">
-            <svg className="w-10 h-10 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
-            </svg>
-          </div>
-          <h2 className="text-2xl font-bold text-white mb-2 drop-shadow-lg">ผลคะแนน</h2>
-          <p className="text-pink-200 mb-4">ดูผลคะแนนการทดสอบ</p>
-          <button 
-            onClick={() => router.push('/StudentDashboard/scores')}
-            className="bg-gradient-to-r from-pink-500 to-purple-600 hover:from-pink-600 hover:to-purple-700 text-white font-semibold py-3 px-6 rounded-xl shadow-lg hover:shadow-xl transition-all duration-300 border border-white/20"
-          >
-            ดูผลคะแนน
           </button>
         </div>
 
@@ -538,41 +572,73 @@ export default function StudentDashboard() {
           </h3>
           <div className="grid grid-cols-2 gap-4">
             <div className="text-center p-4 bg-blue-500/20 rounded-xl border border-blue-400/30 backdrop-blur-sm">
-              <div className="text-2xl font-bold text-blue-300">0</div>
+              <div className="text-2xl font-bold text-blue-300">{historyLoading ? '…' : totalAttempts}</div>
               <div className="text-sm text-blue-200">แบบทดสอบที่ทำ</div>
             </div>
             <div className="text-center p-4 bg-green-500/20 rounded-xl border border-green-400/30 backdrop-blur-sm">
-              <div className="text-2xl font-bold text-green-300">0</div>
+              <div className="text-2xl font-bold text-green-300">{historyLoading ? '…' : avgScore}</div>
               <div className="text-sm text-green-200">คะแนนเฉลี่ย</div>
             </div>
-            <div className="text-center p-4 bg-purple-500/20 rounded-xl border border-purple-400/30 backdrop-blur-sm">
-              <div className="text-2xl font-bold text-purple-300">0</div>
-              <div className="text-sm text-purple-200">เวลาเล่นรวม</div>
-            </div>
             <div className="text-center p-4 bg-pink-500/20 rounded-xl border border-pink-400/30 backdrop-blur-sm">
-              <div className="text-2xl font-bold text-pink-300">-</div>
+              <div className="text-2xl font-bold text-pink-300">{historyLoading ? '…' : rankLabel}</div>
               <div className="text-sm text-pink-200">อันดับ</div>
             </div>
           </div>
+
+          {historyError && (
+            <div className="mt-4 text-sm text-pink-200">
+              {historyError}
+            </div>
+          )}
         </div>
       </div>
 
       {/* กิจกรรมล่าสุด */}
       <div className="relative bg-gradient-to-br from-purple-500/10 via-pink-500/10 to-blue-500/10 backdrop-blur-xl rounded-2xl shadow-2xl p-6 border border-white/20 mb-20">
         <h2 className="text-2xl font-bold text-white mb-4 drop-shadow-lg">กิจกรรมล่าสุด</h2>
-        
-        <div className="text-center py-12">
-          <div className="relative mb-4">
-            <div className="w-16 h-16 bg-gradient-to-br from-purple-500/20 to-pink-500/20 rounded-full flex items-center justify-center mx-auto backdrop-blur-sm border border-white/20">
-              <svg className="w-8 h-8 text-pink-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
-              </svg>
-            </div>
-            <div className="absolute top-0 left-1/2 transform -translate-x-1/2 w-20 h-20 bg-purple-500/10 rounded-full blur-xl animate-pulse"></div>
+
+        {historyLoading ? (
+          <div className="space-y-3">
+            <div className="h-16 rounded-xl bg-white/10 border border-white/10 animate-pulse" />
+            <div className="h-16 rounded-xl bg-white/10 border border-white/10 animate-pulse" />
+            <div className="h-16 rounded-xl bg-white/10 border border-white/10 animate-pulse" />
           </div>
-          <p className="text-pink-200 text-lg font-medium drop-shadow">ยังไม่มีกิจกรรมล่าสุด</p>
-          <p className="text-blue-200 mt-2">เริ่มทำแบบทดสอบเพื่อดูประวัติการทำงาน</p>
-        </div>
+        ) : recentAttempts.length ? (
+          <div className="space-y-3">
+            {recentAttempts.map((att, idx) => {
+              const when = att?.timestamp ? new Date(att.timestamp).toLocaleString('th-TH') : '';
+              const rankText = (Number.isFinite(att?.rank) && Number.isFinite(att?.totalPlayers) && att.rank && att.totalPlayers)
+                ? ` • อันดับ ${att.rank}/${att.totalPlayers}`
+                : '';
+              return (
+                <div key={`${att.roomId || 'room'}-${att.timestamp || idx}`} className="backdrop-blur-md bg-white/10 rounded-2xl p-4 border border-white/20 flex items-center justify-between">
+                  <div className="min-w-0">
+                    <div className="text-white font-semibold truncate">{att.roomName || 'ห้องแบบทดสอบ'}</div>
+                    <div className="text-blue-200 text-sm truncate">{att.questionSetTitle || 'ชุดข้อสอบ'}</div>
+                    <div className="text-white/70 text-xs">{when}{rankText}</div>
+                  </div>
+                  <div className="text-right ml-4 shrink-0">
+                    <div className="text-2xl font-bold text-green-300">{att.finalScore ?? 0}</div>
+                    <div className="text-xs text-green-200">คะแนน</div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        ) : (
+          <div className="text-center py-12">
+            <div className="relative mb-4">
+              <div className="w-16 h-16 bg-gradient-to-br from-purple-500/20 to-pink-500/20 rounded-full flex items-center justify-center mx-auto backdrop-blur-sm border border-white/20">
+                <svg className="w-8 h-8 text-pink-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
+                </svg>
+              </div>
+              <div className="absolute top-0 left-1/2 transform -translate-x-1/2 w-20 h-20 bg-purple-500/10 rounded-full blur-xl animate-pulse"></div>
+            </div>
+            <p className="text-pink-200 text-lg font-medium drop-shadow">ยังไม่มีกิจกรรมล่าสุด</p>
+            <p className="text-blue-200 mt-2">เริ่มทำแบบทดสอบเพื่อดูประวัติการทำงาน</p>
+          </div>
+        )}
       </div>
 
       {/* ปุ่มห้องเกม - ล่างขวา */}
