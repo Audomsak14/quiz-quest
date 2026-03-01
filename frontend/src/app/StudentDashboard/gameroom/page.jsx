@@ -250,7 +250,7 @@ export default function GameRoom() {
                     onClick={() => {
                       if (room.status === 'waiting' && room.players < room.maxPlayers) {
                         const name = (playerName || '').trim() || 'ผู้เล่น';
-                        // โหมดตัวอย่าง: เพิ่ม demo=1 เพื่อให้ Lobby ไม่เชื่อมต่อเซิร์ฟเวอร์
+                        // โหมดตัวอย่าง: เพิ่ม demo=1 เพื่อให้ Lobby ทำงานแบบออฟไลน์ (ไม่เรียกเซิร์ฟเวอร์)
                         router.push(`/lobby?roomId=${room.code}&playerName=${encodeURIComponent(name)}&demo=1`);
                       }
                     }}

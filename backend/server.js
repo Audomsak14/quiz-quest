@@ -9,6 +9,7 @@ import questionSetRoutes from "./routes/questionSetRoutes.js";
 import Room from "./models/Room.js";
 import roomRoutes from "./routes/rooms.js";
 import { requireAuth } from "./middleware/auth.js";
+import QuestionSet from "./models/QuestionSet.js";
 
 const app = express();
 const httpServer = createServer(app);
@@ -94,6 +95,84 @@ app.use("/api/rooms", roomRoutes);
 // Test route
 app.get("/", (req, res) => {
   res.json({ message: "Quiz Quest Backend API" });
+});
+
+// Teacher dashboard stats (real data)
+// Returns stats derived from rooms and completed games for the authenticated teacher.
+app.get('/api/teacher/dashboard', requireAuth, async (req, res) => {
+  try {
+    // Optional: enforce role
+    if (req.user?.role && req.user.role !== 'teacher') {
+      return res.status(403).json({ error: 'Forbidden' });
+    }
+
+    const ownerId = req.user.id;
+
+    // Count question sets created by this teacher (same filter as questionSetRoutes)
+    const questionSetsTotal = await QuestionSet.countDocuments({ createdBy: ownerId });
+
+    const now = new Date();
+    const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0);
+    const endOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1, 0, 0, 0, 0);
+    const testsToday = await Room.countDocuments({
+      ownerId,
+      'gameData.startedAt': { $gte: startOfDay, $lt: endOfDay }
+    });
+
+    const rooms = await Room.find({ ownerId })
+      .select('players gameData.completedPlayers questionSetId')
+      .populate({ path: 'questionSetId', select: 'questions points' })
+      .lean();
+
+    // Unique student participants across all rooms (joined players)
+    const uniquePlayers = new Set();
+    for (const room of rooms) {
+      const players = Array.isArray(room.players) ? room.players : [];
+      for (const p of players) {
+        const key = (p?.playerId || p?.name || '').toString().trim();
+        if (key) uniquePlayers.add(key);
+      }
+    }
+    const studentsJoined = uniquePlayers.size;
+
+    // Average score percent across completed games (exclude partial)
+    const percents = [];
+    for (const room of rooms) {
+      const completed = Array.isArray(room.gameData?.completedPlayers) ? room.gameData.completedPlayers : [];
+      const questions = Array.isArray(room.questionSetId?.questions) ? room.questionSetId.questions : [];
+      const maxPoints = questions.reduce((sum, q) => {
+        const pts = typeof q?.points === 'number' ? q.points : 1;
+        return sum + pts;
+      }, 0);
+
+      for (const entry of completed) {
+        if (entry?.partial) continue;
+        const finalScore = typeof entry?.finalScore === 'number' ? entry.finalScore : null;
+        if (finalScore == null) continue;
+        if (!maxPoints) continue;
+        const pct = (finalScore / maxPoints) * 100;
+        if (!Number.isFinite(pct)) continue;
+        // Clamp for display stability
+        percents.push(Math.max(0, Math.min(100, pct)));
+      }
+    }
+    const averageScorePercent = percents.length
+      ? Math.round((percents.reduce((s, v) => s + v, 0) / percents.length) * 10) / 10
+      : 0;
+
+    res.json({
+      success: true,
+      stats: {
+        questionSetsTotal,
+        studentsJoined,
+        averageScorePercent,
+        testsToday,
+      }
+    });
+  } catch (err) {
+    console.error('Error building teacher dashboard stats:', err);
+    res.status(500).json({ error: 'Failed to build dashboard stats' });
+  }
 });
 
 // Game API endpoints
@@ -208,11 +287,20 @@ app.get("/api/game/history", async (req, res) => {
       return res.status(400).json({ error: "Missing playerId or name" });
     }
 
-    // Fetch rooms that contain this player's completed records (by id first, else by name)
-    const filter = playerIdQ
-      ? { "gameData.completedPlayers.playerId": playerIdQ }
-      : { "gameData.completedPlayers.playerName": name };
-  const rooms = await Room.find(filter).populate('questionSetId').lean();
+    // Fetch rooms that contain this player's completed records.
+    // If both playerId and name are provided, search by either (supports older records that only stored name).
+    const filter = (playerIdQ && name)
+      ? {
+          $or: [
+            { "gameData.completedPlayers.playerId": playerIdQ },
+            { "gameData.completedPlayers.playerName": name },
+          ]
+        }
+      : playerIdQ
+        ? { "gameData.completedPlayers.playerId": playerIdQ }
+        : { "gameData.completedPlayers.playerName": name };
+
+    const rooms = await Room.find(filter).populate('questionSetId').lean();
 
     // Flatten attempts
     const attempts = [];
@@ -235,7 +323,11 @@ app.get("/api/game/history", async (req, res) => {
         perRoomRanks.set(String(room._id), { rankMap, total: sorted.length });
       }
 
-      const entries = allEntries.filter(p => playerIdQ ? (p.playerId === playerIdQ) : (p.playerName === name));
+      const entries = allEntries.filter((p) => {
+        if (playerIdQ && name) return p.playerId === playerIdQ || p.playerName === name;
+        if (playerIdQ) return p.playerId === playerIdQ;
+        return p.playerName === name;
+      });
       const qsArr = Array.isArray(room?.questionSetId?.questions) ? room.questionSetId.questions : null;
       const questionsTotal = qsArr ? qsArr.length : undefined;
       const maxPoints = qsArr ? qsArr.reduce((s, q) => s + (typeof q.points === 'number' ? q.points : 100), 0) : null;
@@ -243,6 +335,8 @@ app.get("/api/game/history", async (req, res) => {
         const key = `${(e.playerId || e.playerName || 'anon')}@${new Date(e.timestamp || 0).getTime()}`;
         const rankInfo = perRoomRanks.get(String(room._id));
         attempts.push({
+          playerId: e.playerId || null,
+          playerName: e.playerName || null,
           roomId: String(room._id),
           roomName: room.name || 'ห้องไม่ทราบชื่อ',
           roomCode: room.roomCode || room.code,
@@ -905,28 +999,40 @@ httpServer.listen(PORT, () => {
 });
 
 // Delete history for a player
-// DELETE /api/game/history?playerId=... [optional: roomId=..., ts=epoch_ms]
+// DELETE /api/game/history?playerId=...|name=... [optional: roomId=..., ts=epoch_ms]
 app.delete("/api/game/history", async (req, res) => {
   try {
     const playerId = (req.query.playerId || '').trim();
+    const name = (req.query.name || '').trim();
     const roomId = (req.query.roomId || '').trim();
     const ts = req.query.ts ? new Date(Number(req.query.ts)) : null;
-    if (!playerId) return res.status(400).json({ error: 'Missing playerId' });
+    if (!playerId && !name) return res.status(400).json({ error: 'Missing playerId or name' });
 
     if (roomId && ts && !isNaN(ts.getTime())) {
       // Delete a specific attempt in one room by exact timestamp
       const r = await Room.updateOne(
         { _id: roomId },
-        { $pull: { 'gameData.completedPlayers': { playerId, timestamp: ts } } }
+        {
+          $pull: {
+            'gameData.completedPlayers': playerId
+              ? { playerId, timestamp: ts }
+              : { playerName: name, timestamp: ts }
+          }
+        }
       );
       return res.json({ success: true, deleted: r.modifiedCount || 0 });
     }
 
     // Delete all attempts for this player across all rooms
-    const r = await Room.updateMany(
-      { 'gameData.completedPlayers.playerId': playerId },
-      { $pull: { 'gameData.completedPlayers': { playerId } } }
-    );
+    const r = playerId
+      ? await Room.updateMany(
+          { 'gameData.completedPlayers.playerId': playerId },
+          { $pull: { 'gameData.completedPlayers': { playerId } } }
+        )
+      : await Room.updateMany(
+          { 'gameData.completedPlayers.playerName': name },
+          { $pull: { 'gameData.completedPlayers': { playerName: name } } }
+        );
     res.json({ success: true, deletedRooms: r.modifiedCount || 0 });
   } catch (e) {
     console.error('Error deleting history:', e);

@@ -1,5 +1,5 @@
 param(
-  [int[]]$Ports = @(3000, 3003)
+  [int[]]$Ports = @(3000, 3001, 3002, 3003)
 )
 
 $ErrorActionPreference = 'Stop'
@@ -9,6 +9,25 @@ $frontendDir = Resolve-Path (Join-Path $scriptDir '..')
 
 Push-Location $frontendDir
 try {
+  # Kill any lingering Next.js processes that were started from this frontend folder.
+  # Port-based cleanup alone can miss orphaned node.exe processes (e.g., crashed watchers).
+  try {
+    $nextProcs = Get-CimInstance Win32_Process -Filter "Name='node.exe'" |
+      Where-Object {
+        $_.CommandLine -and
+        ($_.CommandLine -match [regex]::Escape($frontendDir.Path)) -and
+        ($_.CommandLine -match '\bnext\b')
+      }
+    if ($nextProcs) {
+      $nextProcs | ForEach-Object {
+        Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue
+      }
+    }
+  }
+  catch {
+    # Best-effort only
+  }
+
   foreach ($port in $Ports) {
     $connections = Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinue
     if ($null -ne $connections) {
@@ -19,7 +38,12 @@ try {
     }
   }
 
-  Remove-Item -Recurse -Force .\.next -ErrorAction SilentlyContinue
+  # .next can be intermittently locked (e.g., OneDrive/antivirus). Retry a few times.
+  for ($i = 0; $i -lt 3; $i++) {
+    Remove-Item -Recurse -Force .\.next -ErrorAction SilentlyContinue
+    if (-not (Test-Path .\.next)) { break }
+    Start-Sleep -Milliseconds (300 * ($i + 1))
+  }
 
   npm run dev
 }

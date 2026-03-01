@@ -9,17 +9,35 @@ export default function TeacherDashboard() {
   const router = useRouter();
   const [questionSets, setQuestionSets] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [dashboardStats, setDashboardStats] = useState({
+    studentsJoined: 0,
+    averageScorePercent: 0,
+    testsToday: 0,
+  });
 
   useEffect(() => {
-    fetchQuestionSets();
+    loadDashboard();
   }, []);
 
-  const fetchQuestionSets = async () => {
+  const loadDashboard = async () => {
+    setIsLoading(true);
     try {
-  const response = await axios.get("http://localhost:5000/api/questions/sets", withAuth());
-      setQuestionSets(response.data);
+      const [setsRes, statsRes] = await Promise.all([
+        axios.get("http://localhost:5000/api/questions/sets", withAuth()),
+        axios.get('http://localhost:5000/api/teacher/dashboard', withAuth()),
+      ]);
+      setQuestionSets(Array.isArray(setsRes.data) ? setsRes.data : []);
+      const stats = statsRes.data?.stats || {};
+      setDashboardStats({
+        studentsJoined: Number.isFinite(stats.studentsJoined) ? stats.studentsJoined : 0,
+        averageScorePercent: Number.isFinite(stats.averageScorePercent) ? stats.averageScorePercent : 0,
+        testsToday: Number.isFinite(stats.testsToday) ? stats.testsToday : 0,
+      });
     } catch (err) {
-      console.error("Error fetching question sets:", err);
+      console.error('Error loading teacher dashboard:', err);
+      // Keep existing UI, fall back to zeros when API fails
+      setQuestionSets([]);
+      setDashboardStats({ studentsJoined: 0, averageScorePercent: 0, testsToday: 0 });
     } finally {
       setIsLoading(false);
     }
@@ -39,7 +57,7 @@ export default function TeacherDashboard() {
       try {
   await axios.delete(`http://localhost:5000/api/questions/sets/${setId}`, withAuth());
         await Swal.fire({ icon: "success", title: "ลบสำเร็จ", timer: 1200, showConfirmButton: false });
-        fetchQuestionSets(); // รีเฟรชข้อมูล
+        loadDashboard(); // รีเฟรชข้อมูล
       } catch (err) {
         console.error("Error deleting question set:", err);
         await Swal.fire({ icon: "error", title: "ลบไม่สำเร็จ", text: err.response?.data?.error || err.message });
@@ -163,7 +181,7 @@ export default function TeacherDashboard() {
         <div className="group bg-gradient-to-br from-purple-500/20 to-pink-500/20 backdrop-blur-2xl rounded-2xl p-6 border border-white/10 shadow-xl hover:scale-105 hover:shadow-2xl transition-all duration-300">
           <div className="flex items-center justify-between">
             <div>
-              <h3 className="text-4xl font-bold text-white mb-2">156</h3>
+              <h3 className="text-4xl font-bold text-white mb-2">{dashboardStats.studentsJoined}</h3>
               <p className="text-purple-200 font-semibold text-lg">นักเรียนที่เข้าร่วม</p>
               <div className="w-12 h-1 bg-gradient-to-r from-purple-400 to-pink-400 rounded-full mt-2"></div>
             </div>
@@ -178,7 +196,7 @@ export default function TeacherDashboard() {
         <div className="group bg-gradient-to-br from-pink-500/20 to-red-500/20 backdrop-blur-2xl rounded-2xl p-6 border border-white/10 shadow-xl hover:scale-105 hover:shadow-2xl transition-all duration-300">
           <div className="flex items-center justify-between">
             <div>
-              <h3 className="text-4xl font-bold text-white mb-2">87%</h3>
+              <h3 className="text-4xl font-bold text-white mb-2">{dashboardStats.averageScorePercent}%</h3>
               <p className="text-pink-200 font-semibold text-lg">คะแนนเฉลี่ย</p>
               <div className="w-12 h-1 bg-gradient-to-r from-pink-400 to-red-400 rounded-full mt-2"></div>
             </div>
@@ -193,7 +211,7 @@ export default function TeacherDashboard() {
         <div className="group bg-gradient-to-br from-red-500/20 to-orange-500/20 backdrop-blur-2xl rounded-2xl p-6 border border-white/10 shadow-xl hover:scale-105 hover:shadow-2xl transition-all duration-300">
           <div className="flex items-center justify-between">
             <div>
-              <h3 className="text-4xl font-bold text-white mb-2">24</h3>
+              <h3 className="text-4xl font-bold text-white mb-2">{dashboardStats.testsToday}</h3>
               <p className="text-red-200 font-semibold text-lg">การทดสอบวันนี้</p>
               <div className="w-12 h-1 bg-gradient-to-r from-red-400 to-orange-400 rounded-full mt-2"></div>
             </div>

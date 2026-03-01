@@ -221,9 +221,11 @@ export default function TeacherGameView() {
           </div>
 
           <div className="flex items-center space-x-4">
-            <div className={`px-4 py-2 rounded-xl font-semibold shadow border border-white/40 ${isConnected ? "bg-green-100 text-green-700" : "bg-red-100 text-red-700"}`}>
-              {isConnected ? "🟢 เชื่อมต่อแล้ว" : "🔴 ไม่เชื่อมต่อ"}
-            </div>
+            {isConnected && (
+              <div className="px-4 py-2 rounded-xl font-semibold shadow border border-white/40 bg-green-100 text-green-700">
+                🟢 เชื่อมต่อแล้ว
+              </div>
+            )}
 
             {!gameStarted && (
               <button onClick={startGame} disabled={!isConnected} className="bg-gradient-to-r from-emerald-500 to-sky-500 hover:from-emerald-600 hover:to-sky-600 disabled:opacity-50 text-white font-bold py-3 px-6 rounded-2xl transition-all duration-300 transform hover:scale-[1.03] shadow-lg">🚀 เริ่มเกม</button>

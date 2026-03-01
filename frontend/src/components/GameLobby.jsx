@@ -11,6 +11,7 @@ export default function GameLobby() {
   const roomId = searchParams.get('roomId');
   const isDemo = searchParams.get('demo') === '1';
   const playerName = searchParams.get('playerName') || profileStorage.getName() || 'Player';
+  const providedPlayerId = searchParams.get('playerId') || profileStorage.ensureId(playerName) || null;
   
   const [isConnected, setIsConnected] = useState(false);
   const [roomData, setRoomData] = useState(null);
@@ -20,7 +21,7 @@ export default function GameLobby() {
   
   useEffect(() => {
     if (isDemo) {
-      // โหมดตัวอย่าง: ไม่เชื่อมต่อ socket แค่แสดงหน้ารอเริ่มเกม
+      // โหมดตัวอย่าง: ไม่ต่อ socket (แสดงหน้ารอเริ่มเกมอย่างเดียว)
       setIsConnected(true);
       setConnectionStatus('connected');
       setRoomData({ status: 'waiting', players: [{ name: playerName }] });
@@ -37,7 +38,7 @@ export default function GameLobby() {
     socketManager.on('connected', () => {
       console.log('Connected to server');
       setConnectionStatus('connected');
-      const success = socketManager.joinRoom(roomId, playerName, 'student');
+      const success = socketManager.joinRoom(roomId, playerName, 'student', providedPlayerId);
       setIsConnected(success);
     });
     
@@ -79,7 +80,7 @@ export default function GameLobby() {
     return () => {
       socketManager.disconnect();
     };
-  }, [roomId, playerName, router, isDemo]);
+  }, [roomId, playerName, router, isDemo, providedPlayerId]);
   
   // Fallback: poll backend room status every 2s in case socket event is missed
   useEffect(() => {

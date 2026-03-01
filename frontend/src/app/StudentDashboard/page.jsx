@@ -22,6 +22,7 @@ export default function StudentDashboard() {
     summary: { totalTests: 0, totalAttempts: 0, averageScore: 0, bestScore: 0 },
     attempts: [],
   });
+  const [deletingAttemptKey, setDeletingAttemptKey] = useState('');
 
   // ฟังก์ชันโหลดข้อมูลตัวละคร
   const loadCharacterData = () => {
@@ -145,7 +146,10 @@ export default function StudentDashboard() {
           setHistory({ summary: { totalTests: 0, totalAttempts: 0, averageScore: 0, bestScore: 0 }, attempts: [] });
           return;
         }
-        const qs = id ? `playerId=${encodeURIComponent(id)}` : `name=${encodeURIComponent(name)}`;
+        const params = new URLSearchParams();
+        if (id) params.set('playerId', id);
+        if (name) params.set('name', name);
+        const qs = params.toString();
         const r = await fetch(`http://localhost:5000/api/game/history?${qs}&limit=200`, { cache: 'no-store' });
         const data = await r.json();
         if (!data?.success) throw new Error(data?.error || 'failed');
@@ -163,6 +167,90 @@ export default function StudentDashboard() {
 
     run();
   }, [isClient, playerName]);
+
+  const reloadHistory = async () => {
+    if (typeof window === 'undefined') return;
+    setHistoryLoading(true);
+    setHistoryError('');
+    try {
+      const id = profileStorage.getId();
+      const name = profileStorage.getName() || playerName || '';
+      if (!id && !name) {
+        setHistory({ summary: { totalTests: 0, totalAttempts: 0, averageScore: 0, bestScore: 0 }, attempts: [] });
+        return;
+      }
+      const params = new URLSearchParams();
+      if (id) params.set('playerId', id);
+      if (name) params.set('name', name);
+      const qs = params.toString();
+      const r = await fetch(`http://localhost:5000/api/game/history?${qs}&limit=200`, { cache: 'no-store' });
+      const data = await r.json();
+      if (!data?.success) throw new Error(data?.error || 'failed');
+      setHistory({
+        summary: data.summary || { totalTests: 0, totalAttempts: 0, averageScore: 0, bestScore: 0 },
+        attempts: Array.isArray(data.attempts) ? data.attempts : [],
+      });
+    } catch (e) {
+      setHistoryError('โหลดสถิติ/กิจกรรมล่าสุดไม่ได้');
+      setHistory({ summary: { totalTests: 0, totalAttempts: 0, averageScore: 0, bestScore: 0 }, attempts: [] });
+    } finally {
+      setHistoryLoading(false);
+    }
+  };
+
+  const handleDeleteAttempt = async (att) => {
+    try {
+      const confirm = await Swal.fire({
+        icon: 'warning',
+        title: 'ลบกิจกรรมนี้?',
+        text: 'การลบจะเอารายการนี้ออกจากประวัติการเล่น',
+        showCancelButton: true,
+        confirmButtonText: 'ลบ',
+        cancelButtonText: 'ยกเลิก',
+      });
+      if (!confirm.isConfirmed) return;
+
+      const key = `${att?.roomId || 'room'}-${att?.timestamp || 'ts'}-${att?.playerId || att?.playerName || 'me'}`;
+      setDeletingAttemptKey(key);
+
+      const params = new URLSearchParams();
+      const storedId = profileStorage.getId();
+      if (att?.playerId) params.set('playerId', String(att.playerId));
+      else if (att?.playerName) params.set('name', String(att.playerName));
+      else if (storedId) params.set('playerId', String(storedId));
+      else {
+        const fallbackName = profileStorage.getName() || playerName || '';
+        if (fallbackName) params.set('name', fallbackName);
+      }
+      if (att?.roomId) params.set('roomId', String(att.roomId));
+      if (att?.timestamp) params.set('ts', String(att.timestamp));
+
+      const token = (() => {
+        try {
+          return sessionStorage.getItem('token') || localStorage.getItem('token') || '';
+        } catch {
+          return '';
+        }
+      })();
+      const headers = token ? { Authorization: `Bearer ${token}` } : undefined;
+
+      const res = await fetch(`http://localhost:5000/api/game/history?${params.toString()}`, {
+        method: 'DELETE',
+        headers,
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data?.success) {
+        throw new Error(data?.error || 'ลบไม่สำเร็จ');
+      }
+
+      await Swal.fire({ icon: 'success', title: 'ลบแล้ว', timer: 900, showConfirmButton: false });
+      await reloadHistory();
+    } catch (e) {
+      await Swal.fire({ icon: 'error', title: 'ลบไม่สำเร็จ', text: e?.message || 'เกิดข้อผิดพลาด' });
+    } finally {
+      setDeletingAttemptKey('');
+    }
+  };
 
   // เพิ่ม useEffect สำหรับโหลดข้อมูลเมื่อ component mount อีกครั้ง
   useEffect(() => {
@@ -610,6 +698,7 @@ export default function StudentDashboard() {
               const rankText = (Number.isFinite(att?.rank) && Number.isFinite(att?.totalPlayers) && att.rank && att.totalPlayers)
                 ? ` • อันดับ ${att.rank}/${att.totalPlayers}`
                 : '';
+              const delKey = `${att?.roomId || 'room'}-${att?.timestamp || idx}-${att?.playerId || att?.playerName || 'me'}`;
               return (
                 <div key={`${att.roomId || 'room'}-${att.timestamp || idx}`} className="backdrop-blur-md bg-white/10 rounded-2xl p-4 border border-white/20 flex items-center justify-between">
                   <div className="min-w-0">
@@ -617,9 +706,23 @@ export default function StudentDashboard() {
                     <div className="text-blue-200 text-sm truncate">{att.questionSetTitle || 'ชุดข้อสอบ'}</div>
                     <div className="text-white/70 text-xs">{when}{rankText}</div>
                   </div>
-                  <div className="text-right ml-4 shrink-0">
-                    <div className="text-2xl font-bold text-green-300">{att.finalScore ?? 0}</div>
-                    <div className="text-xs text-green-200">คะแนน</div>
+                  <div className="text-right ml-4 shrink-0 flex flex-col items-end gap-2">
+                    <div>
+                      <div className="text-2xl font-bold text-green-300">{att.finalScore ?? 0}</div>
+                      <div className="text-xs text-green-200">คะแนน</div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        handleDeleteAttempt(att);
+                      }}
+                      disabled={historyLoading || deletingAttemptKey === delKey}
+                      className="px-3 py-1 rounded-xl text-xs font-semibold bg-rose-500/20 text-rose-200 border border-rose-400/30 hover:bg-rose-500/30 disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      {deletingAttemptKey === delKey ? 'กำลังลบ…' : 'ลบ'}
+                    </button>
                   </div>
                 </div>
               );

@@ -637,9 +637,9 @@ export default function MapGame() {
           <div className="text-sm text-gray-500 space-y-1">
             <div>ห้อง: <span className="font-semibold text-blue-600">{roomId}</span></div>
             <div>ผู้เล่น: <span className="font-semibold text-blue-600">{playerName}</span></div>
-            <div className={`text-xs ${isConnected ? 'text-green-600' : 'text-red-600'}`}>
-              {isConnected ? '🟢 เชื่อมต่อแล้ว' : '🔴 ไม่เชื่อมต่อ'}
-            </div>
+            {isConnected && (
+              <div className="text-xs text-green-600">🟢 เชื่อมต่อแล้ว</div>
+            )}
           </div>
           
           <div className="mt-6 p-4 bg-blue-50 rounded-lg">
