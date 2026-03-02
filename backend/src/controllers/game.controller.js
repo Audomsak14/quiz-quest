@@ -17,8 +17,18 @@ const gameController = {
 		res.json({ success: true, ...data });
 	}),
 
+	createHistory: asyncHandler(async (req, res) => {
+		const data = await gameService.createHistory(req.body);
+		res.status(201).json({ success: true, ...data });
+	}),
+
 	deleteHistory: asyncHandler(async (req, res) => {
 		const result = await gameService.deleteHistory(req.query);
+		res.json({ success: true, ...result });
+	}),
+
+	clearRoomHistory: asyncHandler(async (req, res) => {
+		const result = await gameService.clearRoomHistory(Number(req.params.roomId));
 		res.json({ success: true, ...result });
 	}),
 };

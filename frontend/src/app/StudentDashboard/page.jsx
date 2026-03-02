@@ -1,5 +1,5 @@
 "use client";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import Swal from "sweetalert2";
 import { useRouter } from "next/navigation";
 import { profileStorage } from "@/lib/profileStorage";
@@ -7,13 +7,11 @@ import { profileStorage } from "@/lib/profileStorage";
 export default function StudentDashboard() {
   const router = useRouter();
   const [isClient, setIsClient] = useState(false);
-  const [selectedCharacterName, setSelectedCharacterName] = useState("นักเรียน");
+  const [selectedCharacterName, setSelectedCharacterName] = useState("-");
   const [selectedCharacterEmoji, setSelectedCharacterEmoji] = useState("👨‍🎓");
-  const [playerName, setPlayerName] = useState("นักเรียน");
+  const [playerName, setPlayerName] = useState("");
+  const [loginUsername, setLoginUsername] = useState("");
   const [characterImage, setCharacterImage] = useState(null);
-  const [showEditProfile, setShowEditProfile] = useState(false);
-  const [tempPlayerName, setTempPlayerName] = useState("");
-  const [tempPlayerImage, setTempPlayerImage] = useState(null);
 
   // History / Stats
   const [historyLoading, setHistoryLoading] = useState(false);
@@ -23,6 +21,16 @@ export default function StudentDashboard() {
     attempts: [],
   });
   const [deletingAttemptKey, setDeletingAttemptKey] = useState('');
+  const hasPromptedCharacterRef = useRef(false);
+
+  const getLoginUsername = () => {
+    if (typeof window === 'undefined') return '';
+    return (
+      window.sessionStorage?.getItem('username') ||
+      window.localStorage?.getItem('username') ||
+      ''
+    ).trim();
+  };
 
   // ฟังก์ชันโหลดข้อมูลตัวละคร
   const loadCharacterData = () => {
@@ -34,10 +42,15 @@ export default function StudentDashboard() {
   const savedPlayerImage = profileStorage.getImage();
       
       console.log("Loading character data:", { characterName, characterId, savedPlayerName, savedCharacterImage, savedPlayerImage });
+
+      const username = getLoginUsername();
+      setLoginUsername(username);
       
       // โหลดชื่อผู้เล่น
       if (savedPlayerName) {
         setPlayerName(savedPlayerName);
+      } else if (username) {
+        setPlayerName(username);
       } else {
         setPlayerName("นักเรียน");
       }
@@ -51,7 +64,7 @@ export default function StudentDashboard() {
       } else if (characterName) {
         setSelectedCharacterName(characterName);
       } else {
-        setSelectedCharacterName("นักเรียน");
+        setSelectedCharacterName("ยังไม่เลือก");
       }
 
       // โหลดรูปภาพตัวละคร - รองรับทั้งรูปตัวละครและรูปที่ผู้เล่นอัปโหลด
@@ -141,7 +154,7 @@ export default function StudentDashboard() {
       setHistoryError('');
       try {
         const id = profileStorage.getId();
-        const name = profileStorage.getName() || playerName || '';
+        const name = profileStorage.getName() || playerName || getLoginUsername() || '';
         if (!id && !name) {
           setHistory({ summary: { totalTests: 0, totalAttempts: 0, averageScore: 0, bestScore: 0 }, attempts: [] });
           return;
@@ -174,7 +187,7 @@ export default function StudentDashboard() {
     setHistoryError('');
     try {
       const id = profileStorage.getId();
-      const name = profileStorage.getName() || playerName || '';
+      const name = profileStorage.getName() || playerName || getLoginUsername() || '';
       if (!id && !name) {
         setHistory({ summary: { totalTests: 0, totalAttempts: 0, averageScore: 0, bestScore: 0 }, attempts: [] });
         return;
@@ -219,7 +232,7 @@ export default function StudentDashboard() {
       else if (att?.playerName) params.set('name', String(att.playerName));
       else if (storedId) params.set('playerId', String(storedId));
       else {
-        const fallbackName = profileStorage.getName() || playerName || '';
+        const fallbackName = profileStorage.getName() || playerName || getLoginUsername() || '';
         if (fallbackName) params.set('name', fallbackName);
       }
       if (att?.roomId) params.set('roomId', String(att.roomId));
@@ -262,6 +275,26 @@ export default function StudentDashboard() {
     }
   }, [isClient]);
 
+  useEffect(() => {
+    if (!isClient) return;
+
+    const selectedId = profileStorage.getCharacterId();
+    if (selectedId) return;
+
+    if (hasPromptedCharacterRef.current) return;
+    hasPromptedCharacterRef.current = true;
+
+    Swal.fire({
+      icon: 'info',
+      title: 'กรุณาเลือกตัวละครก่อน',
+      text: 'ต้องเลือกตัวละครก่อนเข้าใช้งานแดชบอร์ดนักเรียน',
+      confirmButtonText: 'ไปเลือกตัวละคร',
+      allowOutsideClick: false,
+    }).then(() => {
+      router.replace('/StudentDashboard/character');
+    });
+  }, [isClient, router]);
+
   const handleLogout = async () => {
     if (typeof window !== 'undefined') {
       try {
@@ -285,55 +318,38 @@ export default function StudentDashboard() {
 
   // Derived stats
   const attempts = Array.isArray(history?.attempts) ? history.attempts : [];
-  const totalAttempts = Number.isFinite(history?.summary?.totalAttempts) ? history.summary.totalAttempts : attempts.length;
+  const totalTests = Number.isFinite(history?.summary?.totalTests) ? history.summary.totalTests : attempts.length;
   const avgScore = Number.isFinite(history?.summary?.averageScore) ? history.summary.averageScore : 0;
+  const latestAttempt = attempts[0] || null;
+  const latestScore = Number.isFinite(latestAttempt?.score) ? latestAttempt.score : 0;
+  const latestRank = (Number.isFinite(latestAttempt?.rank) && Number.isFinite(latestAttempt?.totalPlayers) && latestAttempt.rank > 0 && latestAttempt.totalPlayers > 0)
+    ? `${latestAttempt.rank}/${latestAttempt.totalPlayers}`
+    : '-';
+  const latestTestAt = latestAttempt?.timestamp ? new Date(latestAttempt.timestamp).toLocaleString('th-TH') : '-';
   const bestRankEntry = attempts
     .filter(a => Number.isFinite(a?.rank) && Number.isFinite(a?.totalPlayers) && a.rank > 0 && a.totalPlayers > 0)
     .sort((a, b) => (a.rank - b.rank) || (a.totalPlayers - b.totalPlayers))[0];
   const rankLabel = bestRankEntry ? `${bestRankEntry.rank}/${bestRankEntry.totalPlayers}` : '-';
   const recentAttempts = attempts.slice(0, 5);
+  const hasSelectedCharacter = Boolean(profileStorage.getCharacterId());
 
   const handleCharacterSelection = () => {
     router.push('/StudentDashboard/character');
   };
 
-  // ฟังก์ชันเปิด modal แก้ไขข้อมูล
-  const openEditProfile = () => {
-    setTempPlayerName(playerName);
-    setTempPlayerImage(characterImage);
-    setShowEditProfile(true);
-  };
-
-  // ฟังก์ชันจัดการอัปโหลดรูปภาพ
-  const handleImageUpload = (e) => {
-    const file = e.target.files[0];
-    if (file) {
-      const reader = new FileReader();
-      reader.onload = (e) => {
-        setTempPlayerImage(e.target.result);
-      };
-      reader.readAsDataURL(file);
-    }
-  };
-
-  // ฟังก์ชันบันทึกข้อมูล
-  const handleSaveProfile = () => {
-    if (tempPlayerName.trim()) {
-      setPlayerName(tempPlayerName);
-      profileStorage.setName(tempPlayerName);
-    }
-    if (tempPlayerImage && tempPlayerImage !== characterImage) {
-      setCharacterImage(tempPlayerImage);
-      profileStorage.setImage(tempPlayerImage);
-      localStorage.setItem('selectedCharacterImage', tempPlayerImage);
-    }
-    setShowEditProfile(false);
-    setTempPlayerName("");
-    setTempPlayerImage(null);
-  };
-
   // ฟังก์ชันไปหน้าห้องเกม
   const handleGameRoom = () => {
+    if (!hasSelectedCharacter) {
+      Swal.fire({
+        icon: 'warning',
+        title: 'ยังไม่ได้เลือกตัวละคร',
+        text: 'กรุณาเลือกตัวละครก่อนเข้าห้องเกม',
+        confirmButtonText: 'ไปเลือกตัวละคร',
+      }).then(() => {
+        router.push('/StudentDashboard/character');
+      });
+      return;
+    }
     router.push('/StudentDashboard/gameroom');
   };
 
@@ -565,7 +581,7 @@ export default function StudentDashboard() {
             <div>
               <h1 className="text-3xl md:text-4xl font-extrabold tracking-tight text-white mb-1 drop-shadow">แดชบอร์ดนักเรียน</h1>
               <div className="flex flex-col md:flex-row md:items-center md:gap-3">
-                <p className="text-pink-200 font-medium">ยินดีต้อนรับ {playerName}</p>
+                <p className="text-pink-200 font-medium">ยินดีต้อนรับ {loginUsername || playerName || 'นักเรียน'}</p>
                 <p className="text-blue-200 text-sm">ตัวละคร: {selectedCharacterName}</p>
               </div>
             </div>
@@ -601,8 +617,21 @@ export default function StudentDashboard() {
           <h2 className="text-2xl font-bold text-white mb-2 drop-shadow-lg">แบบทดสอบ</h2>
           <p className="text-blue-200 mb-4">เข้าร่วมแบบทดสอบออนไลน์</p>
           <button 
-            onClick={() => router.push('/StudentDashboard/gameroom')}
-            className="bg-gradient-to-r from-blue-500 to-purple-600 hover:from-blue-600 hover:to-purple-700 text-white font-semibold py-3 px-6 rounded-xl shadow-lg hover:shadow-xl transition-all duration-300 border border-white/20"
+            onClick={() => {
+              if (!hasSelectedCharacter) {
+                Swal.fire({
+                  icon: 'warning',
+                  title: 'ยังไม่ได้เลือกตัวละคร',
+                  text: 'กรุณาเลือกตัวละครก่อนเข้าร่วมแบบทดสอบ',
+                  confirmButtonText: 'ไปเลือกตัวละคร',
+                }).then(() => {
+                  router.push('/StudentDashboard/character');
+                });
+                return;
+              }
+              router.push('/StudentDashboard/gameroom');
+            }}
+            className="bg-gradient-to-r from-blue-500 to-purple-600 hover:from-blue-600 hover:to-purple-700 disabled:opacity-60 disabled:cursor-not-allowed text-white font-semibold py-3 px-6 rounded-xl shadow-lg hover:shadow-xl transition-all duration-300 border border-white/20"
           >
             เข้าร่วมแบบทดสอบ
           </button>
@@ -623,62 +652,46 @@ export default function StudentDashboard() {
         </div>
       </div>
 
-      {/* ข้อมูลผู้เล่นและตัวละคร */}
-      <div className="relative grid md:grid-cols-2 gap-6 mb-8">
-        {/* ข้อมูลผู้เล่น */}
-        <div className="bg-gradient-to-br from-blue-500/10 via-purple-500/10 to-pink-500/10 backdrop-blur-xl rounded-2xl shadow-2xl p-6 border border-white/20">
-          <h3 className="text-xl font-bold text-white mb-4 flex items-center justify-between drop-shadow-lg">
-            <span className="flex items-center">
-              <span className="mr-2">👤</span>
-              ข้อมูลผู้เล่น
-            </span>
-            <button
-              onClick={openEditProfile}
-              className="text-pink-300 hover:text-pink-100 text-sm font-medium hover:underline transition-colors"
-            >
-              แก้ไข
-            </button>
-          </h3>
-          <div>
-            <p className="text-lg font-semibold text-white drop-shadow">{playerName}</p>
-            <p className="text-blue-200">ตัวละคร: {selectedCharacterName}</p>
-            {/* Removed image source line per user request */}
-            <button
-              onClick={openEditProfile}
-              className="mt-2 text-xs text-pink-300 hover:text-pink-100 font-medium hover:underline transition-colors"
-            >
-              คลิกเพื่อแก้ไขข้อมูล
-            </button>
+      {/* สถิติการเล่น */}
+      <div className="relative bg-gradient-to-br from-pink-500/10 via-purple-500/10 to-blue-500/10 backdrop-blur-xl rounded-2xl shadow-2xl p-6 border border-white/20 mb-8">
+        <h3 className="text-xl font-bold text-white mb-4 flex items-center drop-shadow-lg">
+          <span className="mr-2">📊</span>
+          สถิติการเล่น
+        </h3>
+
+        <div className="grid md:grid-cols-3 gap-4 mb-4">
+          <div className="text-center p-4 bg-blue-500/20 rounded-xl border border-blue-400/30 backdrop-blur-sm">
+            <div className="text-2xl font-bold text-blue-300">{historyLoading ? '…' : totalTests}</div>
+            <div className="text-sm text-blue-200">แบบทดสอบที่ทำ</div>
+          </div>
+          <div className="text-center p-4 bg-green-500/20 rounded-xl border border-green-400/30 backdrop-blur-sm">
+            <div className="text-2xl font-bold text-green-300">{historyLoading ? '…' : avgScore}</div>
+            <div className="text-sm text-green-200">คะแนนเฉลี่ย</div>
+          </div>
+          <div className="text-center p-4 bg-pink-500/20 rounded-xl border border-pink-400/30 backdrop-blur-sm">
+            <div className="text-2xl font-bold text-pink-300">{historyLoading ? '…' : rankLabel}</div>
+            <div className="text-sm text-pink-200">อันดับดีที่สุด</div>
           </div>
         </div>
 
-        {/* สถิติการเล่น */}
-        <div className="bg-gradient-to-br from-pink-500/10 via-purple-500/10 to-blue-500/10 backdrop-blur-xl rounded-2xl shadow-2xl p-6 border border-white/20">
-          <h3 className="text-xl font-bold text-white mb-4 flex items-center drop-shadow-lg">
-            <span className="mr-2">📊</span>
-            สถิติการเล่น
-          </h3>
-          <div className="grid grid-cols-2 gap-4">
-            <div className="text-center p-4 bg-blue-500/20 rounded-xl border border-blue-400/30 backdrop-blur-sm">
-              <div className="text-2xl font-bold text-blue-300">{historyLoading ? '…' : totalAttempts}</div>
-              <div className="text-sm text-blue-200">แบบทดสอบที่ทำ</div>
+        <div className="bg-white/10 border border-white/20 rounded-xl p-4">
+          <div className="text-white font-semibold mb-2">ผลแบบทดสอบล่าสุด</div>
+          {latestAttempt ? (
+            <div className="grid md:grid-cols-3 gap-3 text-sm">
+              <div className="text-blue-100">คะแนนล่าสุด: <span className="font-bold text-green-300">{latestScore}</span></div>
+              <div className="text-blue-100">อันดับล่าสุด: <span className="font-bold text-pink-300">{latestRank}</span></div>
+              <div className="text-blue-100">เวลา: <span className="font-medium text-white">{latestTestAt}</span></div>
             </div>
-            <div className="text-center p-4 bg-green-500/20 rounded-xl border border-green-400/30 backdrop-blur-sm">
-              <div className="text-2xl font-bold text-green-300">{historyLoading ? '…' : avgScore}</div>
-              <div className="text-sm text-green-200">คะแนนเฉลี่ย</div>
-            </div>
-            <div className="text-center p-4 bg-pink-500/20 rounded-xl border border-pink-400/30 backdrop-blur-sm">
-              <div className="text-2xl font-bold text-pink-300">{historyLoading ? '…' : rankLabel}</div>
-              <div className="text-sm text-pink-200">อันดับ</div>
-            </div>
-          </div>
-
-          {historyError && (
-            <div className="mt-4 text-sm text-pink-200">
-              {historyError}
-            </div>
+          ) : (
+            <div className="text-blue-200 text-sm">ยังไม่มีผลการทำแบบทดสอบล่าสุด</div>
           )}
         </div>
+
+        {historyError && (
+          <div className="mt-4 text-sm text-pink-200">
+            {historyError}
+          </div>
+        )}
       </div>
 
       {/* กิจกรรมล่าสุด */}
@@ -702,13 +715,13 @@ export default function StudentDashboard() {
               return (
                 <div key={`${att.roomId || 'room'}-${att.timestamp || idx}`} className="backdrop-blur-md bg-white/10 rounded-2xl p-4 border border-white/20 flex items-center justify-between">
                   <div className="min-w-0">
-                    <div className="text-white font-semibold truncate">{att.roomName || 'ห้องแบบทดสอบ'}</div>
-                    <div className="text-blue-200 text-sm truncate">{att.questionSetTitle || 'ชุดข้อสอบ'}</div>
+                    <div className="text-white font-semibold truncate">ห้องแบบทดสอบ #{att.roomId || '-'}</div>
+                    <div className="text-blue-200 text-sm truncate">ผู้เล่น: {att.playerName || loginUsername || playerName || '-'}</div>
                     <div className="text-white/70 text-xs">{when}{rankText}</div>
                   </div>
                   <div className="text-right ml-4 shrink-0 flex flex-col items-end gap-2">
                     <div>
-                      <div className="text-2xl font-bold text-green-300">{att.finalScore ?? 0}</div>
+                      <div className="text-2xl font-bold text-green-300">{att.score ?? 0}</div>
                       <div className="text-xs text-green-200">คะแนน</div>
                     </div>
                     <button
@@ -762,76 +775,6 @@ export default function StudentDashboard() {
         </button>
       </div>
 
-      {/* Edit Profile Modal */}
-      {showEditProfile && (
-        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center p-4 z-50">
-          <div className="bg-gradient-to-br from-white/90 to-white/80 backdrop-blur-xl rounded-2xl p-6 w-full max-w-md shadow-2xl border border-white/20">
-            <h3 className="text-xl font-bold text-gray-800 mb-4">แก้ไขข้อมูลผู้เล่น</h3>
-            
-            {/* Avatar Preview */}
-            <div className="flex justify-center mb-4">
-              <div className="w-24 h-24 bg-gradient-to-br from-purple-400 to-pink-500 rounded-full flex items-center justify-center text-4xl relative overflow-hidden shadow-lg">
-                {tempPlayerImage && tempPlayerImage.startsWith('data:') ? (
-                  <img 
-                    src={tempPlayerImage} 
-                    alt="Temp Avatar" 
-                    className="w-full h-full object-cover"
-                  />
-                ) : (
-                  <span>{selectedCharacterEmoji}</span>
-                )}
-              </div>
-            </div>
-
-            {/* Name Input */}
-            <div className="mb-4">
-              <label className="block text-gray-700 text-sm font-bold mb-2">
-                ชื่อผู้เล่น
-              </label>
-              <input
-                type="text"
-                placeholder="กรอกชื่อผู้เล่น"
-                value={tempPlayerName}
-                onChange={(e) => setTempPlayerName(e.target.value)}
-                className="w-full p-3 border border-gray-300 rounded-xl text-gray-800 focus:ring-2 focus:ring-purple-500 focus:border-transparent backdrop-blur-sm bg-white/80"
-              />
-            </div>
-
-            {/* Image Upload */}
-            <div className="mb-6">
-              <label className="block text-gray-700 text-sm font-bold mb-2">
-                รูปโปรไฟล์
-              </label>
-              <input
-                type="file"
-                accept="image/*"
-                onChange={handleImageUpload}
-                className="w-full p-3 border border-gray-300 rounded-xl text-gray-800 focus:ring-2 focus:ring-purple-500 focus:border-transparent backdrop-blur-sm bg-white/80"
-              />
-              <p className="text-gray-500 text-xs mt-1">อัปโหลดรูปภาพ (JPG, PNG, GIF)</p>
-            </div>
-
-            <div className="flex space-x-3">
-              <button
-                onClick={() => {
-                  setShowEditProfile(false);
-                  setTempPlayerName("");
-                  setTempPlayerImage(null);
-                }}
-                className="flex-1 bg-gradient-to-r from-gray-500 to-gray-600 hover:from-gray-600 hover:to-gray-700 text-white font-bold py-3 px-4 rounded-xl transition-all duration-300 shadow-lg hover:shadow-xl transform hover:scale-105"
-              >
-                ยกเลิก
-              </button>
-              <button
-                onClick={handleSaveProfile}
-                className="flex-1 bg-gradient-to-r from-purple-500 to-pink-500 hover:from-purple-600 hover:to-pink-600 text-white font-bold py-3 px-4 rounded-xl transition-all duration-300 shadow-lg hover:shadow-xl transform hover:scale-105"
-              >
-                บันทึก
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 }

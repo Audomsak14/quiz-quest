@@ -25,6 +25,42 @@ const teacherService = {
 			testsToday,
 		};
 	},
+
+	async testsToday() {
+		const todayStart = new Date();
+		todayStart.setHours(0, 0, 0, 0);
+
+		const rooms = await prisma.room.findMany({
+			where: {
+				createdAt: { gte: todayStart },
+			},
+			include: {
+				questionSet: {
+					select: {
+						title: true,
+					},
+				},
+				_count: {
+					select: {
+						players: true,
+					},
+				},
+			},
+			orderBy: {
+				createdAt: 'desc',
+			},
+		});
+
+		return rooms.map((room) => ({
+			id: room.id,
+			code: room.code,
+			name: room.name,
+			status: room.status,
+			questionSetTitle: room.questionSet?.title || 'ไม่ระบุชุดคำถาม',
+			playersCount: room._count?.players || 0,
+			createdAt: room.createdAt,
+		}));
+	},
 };
 
 module.exports = teacherService;

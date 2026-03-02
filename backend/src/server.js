@@ -2,7 +2,7 @@ const express = require('express');
 const cors = require('cors');
 require('dotenv/config');
 
-const apiRoutes = require('./routes/index.route');
+const apiRoutes = require('./routes');
 const { attachUser } = require('./middleware/auth.middleware');
 const { errorHandler, notFoundHandler } = require('./middleware/error.middleware');
 

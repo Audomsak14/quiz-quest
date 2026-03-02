@@ -5,6 +5,8 @@ import Swal from "sweetalert2";
 import axios from "axios";
 import { useRouter } from "next/navigation";
 
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:5000";
+
 export default function Register() {
   const [username, setUser] = useState("");
   const [password, setPass] = useState("");
@@ -31,7 +33,7 @@ export default function Register() {
     }
 
     try {
-      await axios.post("http://localhost:5000/api/auth/register", { username, password });
+      await axios.post(`${API_BASE_URL}/api/auth/register`, { username, password });
       
       // เก็บข้อมูลไว้ใน localStorage เพื่อจำไว้
       localStorage.setItem("rememberedUsername", username);

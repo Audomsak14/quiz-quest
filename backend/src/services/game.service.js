@@ -71,6 +71,10 @@ const gameService = {
 		const limit = Math.min(Number(query.limit) || 50, 500);
 		const where = {};
 
+		if (query.roomId) {
+			where.roomId = Number(query.roomId);
+		}
+
 		if (query.playerId) {
 			where.playerId = String(query.playerId);
 		} else if (query.name) {
@@ -108,6 +112,44 @@ const gameService = {
 		};
 	},
 
+	async createHistory(payload) {
+		const roomId = Number(payload.roomId);
+		if (!Number.isInteger(roomId) || roomId <= 0) {
+			throw appError('Invalid roomId', 400);
+		}
+
+		const room = await prisma.room.findUnique({ where: { id: roomId } });
+		if (!room) {
+			throw appError('Room not found', 404);
+		}
+
+		const score = Number(payload.score) || 0;
+
+		const record = await prisma.gameAttempt.create({
+			data: {
+				roomId,
+				playerId: payload.playerId ? String(payload.playerId) : null,
+				playerName: payload.playerName ? String(payload.playerName) : null,
+				score,
+				totalPlayers: payload.totalPlayers ? Number(payload.totalPlayers) : null,
+				rank: payload.rank ? Number(payload.rank) : null,
+			},
+		});
+
+		return {
+			attempt: {
+				_id: toMongoLikeId(record.id),
+				roomId: toMongoLikeId(record.roomId),
+				playerId: record.playerId,
+				playerName: record.playerName,
+				score: record.score,
+				rank: record.rank,
+				totalPlayers: record.totalPlayers,
+				timestamp: record.timestamp,
+			},
+		};
+	},
+
 	async deleteHistory(query) {
 		const where = {};
 
@@ -131,6 +173,22 @@ const gameService = {
 
 		const deleted = await prisma.gameAttempt.deleteMany({ where });
 		return { deleted: deleted.count };
+	},
+
+	async clearRoomHistory(roomId) {
+		const room = await prisma.room.findUnique({ where: { id: roomId } });
+		if (!room) {
+			throw appError('Room not found', 404);
+		}
+
+		const deleted = await prisma.gameAttempt.deleteMany({
+			where: { roomId },
+		});
+
+		return {
+			roomId: toMongoLikeId(roomId),
+			deleted: deleted.count,
+		};
 	},
 };
 

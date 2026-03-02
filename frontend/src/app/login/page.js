@@ -5,6 +5,8 @@ import Swal from "sweetalert2";
 import axios from "axios";
 import { useRouter } from "next/navigation";
 
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:5000";
+
 export default function Login() {
   const [username, setUser] = useState("");
   const [password, setPass] = useState("");
@@ -39,7 +41,7 @@ export default function Login() {
     try {
       console.log("🔍 Attempting login with:", { username, role });
       
-      const res = await axios.post("http://localhost:5000/api/auth/login", { username, password, role });
+      const res = await axios.post(`${API_BASE_URL}/api/auth/login`, { username, password, role });
       
       console.log("✅ Login response:", res.data);
       
@@ -51,8 +53,16 @@ export default function Login() {
         ];
         const preserved = {};
         for (const k of preserveKeys) preserved[k] = localStorage.getItem(k);
+        const preservedProfiles = {};
+        for (let i = 0; i < localStorage.length; i += 1) {
+          const key = localStorage.key(i);
+          if (key && key.startsWith('qq-profile:')) {
+            preservedProfiles[key] = localStorage.getItem(key);
+          }
+        }
         localStorage.clear();
         for (const [k,v] of Object.entries(preserved)) if (v !== null) localStorage.setItem(k, v);
+        for (const [k,v] of Object.entries(preservedProfiles)) if (v !== null) localStorage.setItem(k, v);
       } catch {}
 
       // เก็บ token และข้อมูลผู้ใช้ (sessionStorage เป็นหลัก เพื่อแยกแต่ละแท็บ/บัญชี)
@@ -90,7 +100,7 @@ export default function Login() {
 
   const isNetwork = !err.response;
   const message = isNetwork
-    ? 'เชื่อมต่อเซิร์ฟเวอร์ไม่ได้ (ตรวจว่า backend รันที่ http://localhost:5000 และเปิด MongoDB แล้ว)'
+    ? `เชื่อมต่อเซิร์ฟเวอร์ไม่ได้ (ตรวจว่า backend รันที่ ${API_BASE_URL} และเข้าถึงได้จาก browser นี้)`
     : (err.response?.data?.error || err.message);
 
   await Swal.fire({ icon: 'error', title: 'ล็อกอินไม่สำเร็จ', text: message });

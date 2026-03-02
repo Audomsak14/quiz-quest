@@ -115,9 +115,20 @@ export default function TeacherGameDashboard() {
     
     try {
       console.log('📡 Calling backend API to update room status...');
-      // Call backend API to start the game
-  const token = (typeof window !== 'undefined') ? (sessionStorage.getItem('token') || localStorage.getItem('token')) : null;
+      const token = (typeof window !== 'undefined') ? (sessionStorage.getItem('token') || localStorage.getItem('token')) : null;
       const headers = { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) };
+
+      // Reset previous attempts in this room before opening a new round
+      try {
+        await fetch(`http://localhost:5000/api/game/history/room/${roomId}`, {
+          method: 'DELETE',
+          headers,
+        });
+      } catch (clearErr) {
+        console.warn('Clear room history failed (continue start):', clearErr);
+      }
+
+      // Call backend API to start the game
       const response = await fetch(`http://localhost:5000/api/rooms/${roomId}`, {
         method: 'PUT',
         headers,

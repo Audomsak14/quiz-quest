@@ -10,6 +10,43 @@ const safe = (fn, fallback = null) => {
   }
 };
 
+const PROFILE_PREFIX = 'qq-profile:';
+
+const getActiveUsername = () => safe(() => {
+  const fromSession = (sessionStorage.getItem('username') || '').trim();
+  if (fromSession) return fromSession;
+  const fromLocal = (localStorage.getItem('username') || '').trim();
+  return fromLocal;
+}, '');
+
+const getProfileKey = () => {
+  const username = getActiveUsername();
+  return username ? `${PROFILE_PREFIX}${username}` : '';
+};
+
+const readProfile = () => safe(() => {
+  const key = getProfileKey();
+  if (!key) return null;
+  const raw = localStorage.getItem(key);
+  if (!raw) return null;
+  const parsed = JSON.parse(raw);
+  return parsed && typeof parsed === 'object' ? parsed : null;
+}, null);
+
+const writeProfile = (patch) => {
+  safe(() => {
+    const key = getProfileKey();
+    if (!key) return;
+    const current = readProfile() || {};
+    const next = {
+      ...current,
+      ...patch,
+      updatedAt: new Date().toISOString(),
+    };
+    localStorage.setItem(key, JSON.stringify(next));
+  });
+};
+
 export const profileStorage = {
   // Stable playerId (use for identity across rooms and history)
   getId() {
@@ -17,6 +54,10 @@ export const profileStorage = {
       // Prefer sessionStorage for this tab; fall back to localStorage
       let id = sessionStorage.getItem('playerId');
       if (!id) id = localStorage.getItem('playerId');
+      if (!id) {
+        const profile = readProfile();
+        id = profile?.playerId || '';
+      }
       // If found in local but not in session, copy it so this tab uses the same id
       if (id && !sessionStorage.getItem('playerId')) {
         try { sessionStorage.setItem('playerId', id); } catch {}
@@ -29,9 +70,11 @@ export const profileStorage = {
       if (!id) {
         sessionStorage.removeItem('playerId');
         localStorage.removeItem('playerId');
+        writeProfile({ playerId: '' });
       } else {
         sessionStorage.setItem('playerId', String(id));
         localStorage.setItem('playerId', String(id));
+        writeProfile({ playerId: String(id) });
       }
     });
   },
@@ -48,14 +91,25 @@ export const profileStorage = {
   },
   // Name
   getName() {
-    return safe(() => sessionStorage.getItem('playerName') || '', '');
+    return safe(() => {
+      const sessionName = sessionStorage.getItem('playerName') || '';
+      if (sessionName) return sessionName;
+      const profileName = readProfile()?.playerName || '';
+      if (profileName) {
+        try { sessionStorage.setItem('playerName', profileName); } catch {}
+      }
+      return profileName;
+    }, '');
   },
   setName(name) {
     safe(() => {
       if (name == null) {
         sessionStorage.removeItem('playerName');
+        writeProfile({ playerName: '' });
       } else {
-        sessionStorage.setItem('playerName', String(name));
+        const value = String(name);
+        sessionStorage.setItem('playerName', value);
+        writeProfile({ playerName: value });
       }
       // Purge old value to avoid confusion
       localStorage.removeItem('playerName');
@@ -65,7 +119,13 @@ export const profileStorage = {
   // Avatar image (base64 or URL)
   getImage() {
     return safe(() => {
-      const raw = sessionStorage.getItem('playerImage') || '';
+      let raw = sessionStorage.getItem('playerImage') || '';
+      if (!raw) {
+        raw = readProfile()?.playerImage || '';
+        if (raw) {
+          try { sessionStorage.setItem('playerImage', raw); } catch {}
+        }
+      }
       if (!raw) return '';
 
       // If the stored avatar is one of our built-in sprite sheets, force a
@@ -84,20 +144,42 @@ export const profileStorage = {
   },
   setImage(image) {
     safe(() => {
-      if (!image) sessionStorage.removeItem('playerImage');
-      else sessionStorage.setItem('playerImage', String(image));
+      if (!image) {
+        sessionStorage.removeItem('playerImage');
+        writeProfile({ playerImage: '' });
+      }
+      else {
+        const value = String(image);
+        sessionStorage.setItem('playerImage', value);
+        writeProfile({ playerImage: value });
+      }
       localStorage.removeItem('playerImage');
     });
   },
 
   // Emoji/character id
   getCharacterId() {
-    return safe(() => sessionStorage.getItem('selectedCharacter') || '', '');
+    return safe(() => {
+      const sessionCharacter = sessionStorage.getItem('selectedCharacter') || '';
+      if (sessionCharacter) return sessionCharacter;
+      const profileCharacter = readProfile()?.selectedCharacter || '';
+      if (profileCharacter) {
+        try { sessionStorage.setItem('selectedCharacter', profileCharacter); } catch {}
+      }
+      return profileCharacter;
+    }, '');
   },
   setCharacterId(id) {
     safe(() => {
-      if (!id) sessionStorage.removeItem('selectedCharacter');
-      else sessionStorage.setItem('selectedCharacter', String(id));
+      if (!id) {
+        sessionStorage.removeItem('selectedCharacter');
+        writeProfile({ selectedCharacter: '' });
+      }
+      else {
+        const value = String(id);
+        sessionStorage.setItem('selectedCharacter', value);
+        writeProfile({ selectedCharacter: value });
+      }
       localStorage.removeItem('selectedCharacter');
     });
   },
@@ -105,15 +187,28 @@ export const profileStorage = {
   // Avatar config (JSON)
   getAvatarConfig() {
     return safe(() => {
-      const raw = sessionStorage.getItem('avatarConfig') || '';
+      let raw = sessionStorage.getItem('avatarConfig') || '';
+      if (!raw) {
+        const profileAvatarConfig = readProfile()?.avatarConfig || null;
+        if (profileAvatarConfig) {
+          raw = JSON.stringify(profileAvatarConfig);
+          try { sessionStorage.setItem('avatarConfig', raw); } catch {}
+        }
+      }
       if (!raw) return null;
       try { return JSON.parse(raw); } catch { return null; }
     }, null);
   },
   setAvatarConfig(cfg) {
     safe(() => {
-      if (!cfg) sessionStorage.removeItem('avatarConfig');
-      else sessionStorage.setItem('avatarConfig', JSON.stringify(cfg));
+      if (!cfg) {
+        sessionStorage.removeItem('avatarConfig');
+        writeProfile({ avatarConfig: null });
+      }
+      else {
+        sessionStorage.setItem('avatarConfig', JSON.stringify(cfg));
+        writeProfile({ avatarConfig: cfg });
+      }
     });
   },
 

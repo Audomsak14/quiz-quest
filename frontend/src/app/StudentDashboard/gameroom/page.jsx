@@ -15,9 +15,23 @@ export default function GameRoom() {
   const [playerAvatar, setPlayerAvatar] = useState('');
   const [tempPlayerName, setTempPlayerName] = useState('');
   const [tempPlayerAvatar, setTempPlayerAvatar] = useState('');
-  // ไม่ดึงรายการห้องแบบสาธารณะเพื่อความเป็นส่วนตัวของแต่ละบัญชี
-  // นักเรียนเข้าร่วมด้วยรหัสเท่านั้น
-  const [gameRooms, setGameRooms] = useState([]);
+
+  const getLoginUsername = () => {
+    if (typeof window === 'undefined') return '';
+    return (
+      window.sessionStorage?.getItem('username') ||
+      window.localStorage?.getItem('username') ||
+      ''
+    ).trim();
+  };
+
+  const getPreferredPlayerName = () => {
+    const profileName = (playerName || '').trim();
+    if (profileName) return profileName;
+    const username = getLoginUsername();
+    if (username) return username;
+    return 'ผู้เล่น';
+  };
 
   useEffect(() => {
     // โหลดข้อมูลผู้เล่นจาก sessionStorage (กันชื่อไหลข้ามบัญชี/แท็บ)
@@ -26,25 +40,13 @@ export default function GameRoom() {
     const savedImage = profileStorage.getImage();
 
     if (savedName) setPlayerName(savedName);
+    else {
+      const username = getLoginUsername();
+      if (username) setPlayerName(username);
+    }
     if (savedImage) setPlayerAvatar(savedImage);
     else if (savedAvatarEmoji) setPlayerAvatar(savedAvatarEmoji);
 
-    // สร้างห้องตัวอย่างแบบแยกต่อแท็บ (ไม่ชนกับบัญชีอื่น)
-    try {
-      const cached = typeof window !== 'undefined' ? sessionStorage.getItem('demoRooms') : null;
-      if (cached) {
-        setGameRooms(JSON.parse(cached));
-      } else {
-        const randomCode = () => Array.from({ length: 6 }, () => 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'[Math.floor(Math.random()*32)]).join('');
-        const rooms = [
-          { id: randomCode(), name: 'ห้องทดสอบ 1', code: randomCode(), status: 'waiting', players: Math.floor(Math.random()*4)+1, maxPlayers: 8 },
-          { id: randomCode(), name: 'Quiz มันส์ๆ', code: randomCode(), status: 'waiting', players: Math.floor(Math.random()*4)+1, maxPlayers: 10 },
-          { id: randomCode(), name: 'ทดลองเล่น', code: randomCode(), status: 'waiting', players: Math.floor(Math.random()*3)+1, maxPlayers: 6 },
-        ];
-        sessionStorage.setItem('demoRooms', JSON.stringify(rooms));
-        setGameRooms(rooms);
-      }
-    } catch {}
   }, []);
 
   const handleImageUpload = (e) => {
@@ -93,7 +95,7 @@ export default function GameRoom() {
         await Swal.fire({ icon: 'warning', title: 'ห้องกำลังเล่นอยู่', text: 'ไม่สามารถเข้าร่วมได้' });
         return;
       }
-      const name = (playerName || '').trim() || 'ผู้เล่น';
+      const name = getPreferredPlayerName();
       // join ผู้เล่นเข้า room
       await axios.post(`http://localhost:5000/api/rooms/${room._id}/join`, { name });
       // เคลียร์ modal และไปหน้า lobby รอเริ่มเกม
@@ -120,14 +122,6 @@ export default function GameRoom() {
     }
   };
 
-  const getStatusColor = (status) => {
-    return status === 'waiting' ? 'text-green-500' : 'text-yellow-500';
-  };
-
-  const getStatusText = (status) => {
-    return status === 'waiting' ? 'รอผู้เล่น' : 'กำลังเล่น';
-  };
-
   return (
      <div className="min-h-screen p-8" style={{
       background: 'linear-gradient(to bottom, #030637 0%, #180161 50%, #FF204E 100%)'
@@ -138,8 +132,9 @@ export default function GameRoom() {
         <div className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 w-96 h-96 bg-pink-500/5 rounded-full blur-3xl animate-pulse delay-500"></div>
       </div>
 
+      <div className="relative z-10 flex flex-col min-h-[calc(100vh-4rem)]">
       {/* Header Section */}
-      <div className="relative z-10 mb-8">
+      <div className="mb-8">
         <div className="bg-white/5 backdrop-blur-2xl rounded-3xl shadow-2xl p-8 border border-white/10">
           <div className="flex items-center justify-between">
             <div className="flex items-center space-x-6">
@@ -196,8 +191,8 @@ export default function GameRoom() {
       </div>
 
       {/* Action Section */}
-      <div className="relative z-10 mb-8">
-        <div className="flex justify-center">
+      <div className="flex-1 flex items-center justify-center">
+        <div className="flex justify-center w-full">
           <button
             onClick={() => setShowJoinRoom(true)}
             className="group relative bg-gradient-to-r from-blue-500 to-cyan-500 hover:from-blue-600 hover:to-cyan-600 text-white font-bold py-6 px-12 rounded-3xl transition-all duration-300 transform hover:scale-105 shadow-2xl hover:shadow-cyan-500/25 flex items-center space-x-4"
@@ -212,100 +207,6 @@ export default function GameRoom() {
           </button>
         </div>
       </div>
-
-      {/* Game Rooms Section */}
-      <div className="relative z-10">
-        <div className="bg-white/5 backdrop-blur-2xl rounded-3xl shadow-2xl border border-white/10 overflow-hidden">
-          <div className="bg-gradient-to-r from-indigo-600 via-purple-600 to-pink-600 p-8">
-            <div className="flex items-center space-x-4">
-              <div className="w-12 h-12 bg-white/20 rounded-2xl flex items-center justify-center">
-                <svg className="w-7 h-7 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" />
-                </svg>
-              </div>
-              <div>
-                <h2 className="text-3xl font-bold text-white">ห้องเกมทั้งหมด</h2>
-                <p className="text-purple-100 text-lg">เลือกห้องที่ต้องการเข้าร่วม</p>
-              </div>
-            </div>
-          </div>
-
-          <div className="p-8">
-            {gameRooms.length === 0 ? (
-              <div className="text-center py-16">
-                <div className="w-32 h-32 bg-purple-500/10 rounded-full flex items-center justify-center mx-auto mb-8">
-                  <svg className="w-16 h-16 text-purple-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
-                  </svg>
-                </div>
-                <h3 className="text-2xl font-bold text-white mb-4">ยังไม่มีห้องเกมใดๆ</h3>
-                <p className="text-purple-300 text-lg">รอสักครู่ ห้องเกมจะปรากฏขึ้นเร็วๆ นี้!</p>
-              </div>
-            ) : (
-              <div className="grid gap-6">
-                {gameRooms.map((room, index) => (
-                  <div
-                    key={room.id}
-                    className="group relative bg-white/5 backdrop-blur-md rounded-2xl p-6 border border-white/10 hover:bg-white/10 transition-all duration-300 transform hover:scale-[1.02] shadow-xl hover:shadow-2xl cursor-pointer"
-                    onClick={() => {
-                      if (room.status === 'waiting' && room.players < room.maxPlayers) {
-                        const name = (playerName || '').trim() || 'ผู้เล่น';
-                        // โหมดตัวอย่าง: เพิ่ม demo=1 เพื่อให้ Lobby ทำงานแบบออฟไลน์ (ไม่เรียกเซิร์ฟเวอร์)
-                        router.push(`/lobby?roomId=${room.code}&playerName=${encodeURIComponent(name)}&demo=1`);
-                      }
-                    }}
-                  >
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center space-x-6">
-                        <div className="relative">
-                          <div className={`w-16 h-16 rounded-2xl flex items-center justify-center text-2xl font-bold text-white shadow-xl ${
-                            room.status === 'waiting' ? 'bg-gradient-to-br from-green-400 to-emerald-500' : 'bg-gradient-to-br from-yellow-400 to-orange-500'
-                          }`}>
-                            {index + 1}
-                          </div>
-                          <div className={`absolute -top-1 -right-1 w-6 h-6 rounded-full border-2 border-white ${
-                            room.status === 'waiting' ? 'bg-green-500 animate-pulse' : 'bg-yellow-500'
-                          }`}></div>
-                        </div>
-                        <div>
-                          <h3 className="text-2xl font-bold text-white group-hover:text-purple-300 transition-colors">{room.name}</h3>
-                          <div className="flex items-center space-x-4 mt-2">
-                            <p className="text-purple-300 font-medium">🔒 {room.code}</p>
-                            <div className={`px-3 py-1 rounded-full text-sm font-bold ${
-                              room.status === 'waiting' 
-                                ? 'bg-green-500/20 text-green-300 border border-green-500/30' 
-                                : 'bg-yellow-500/20 text-yellow-300 border border-yellow-500/30'
-                            }`}>
-                              {getStatusText(room.status)}
-                            </div>
-                          </div>
-                        </div>
-                      </div>
-                      
-                      <div className="text-right">
-                        <div className="text-3xl font-bold text-white mb-1">
-                          {room.players}<span className="text-purple-300">/{room.maxPlayers}</span>
-                        </div>
-                        <p className="text-purple-300 font-medium">ผู้เล่น</p>
-                        
-                        {room.status === 'waiting' && room.players < room.maxPlayers && (
-                          <div className="mt-3">
-                            <div className="bg-gradient-to-r from-green-500 to-emerald-500 text-white px-4 py-2 rounded-xl font-bold text-sm shadow-lg">
-                              คลิกเพื่อเข้าร่วม
-                            </div>
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                    
-                    {/* Hover Effect Background */}
-                    <div className="absolute inset-0 rounded-2xl bg-gradient-to-r from-purple-600/10 to-pink-600/10 opacity-0 group-hover:opacity-100 transition-opacity duration-300"></div>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-        </div>
       </div>
 
       {/* Join Room Modal */}

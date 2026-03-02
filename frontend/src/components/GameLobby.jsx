@@ -81,6 +81,47 @@ export default function GameLobby() {
       socketManager.disconnect();
     };
   }, [roomId, playerName, router, isDemo, providedPlayerId]);
+
+  useEffect(() => {
+    if (isDemo) return;
+    if (!roomId || gameStarted) return;
+
+    let cancelled = false;
+
+    const syncPlayers = async () => {
+      try {
+        const response = await fetch(`http://localhost:5000/api/rooms/${roomId}/players`, {
+          cache: 'no-store',
+        });
+        if (!response.ok) return;
+
+        const raw = await response.json();
+        if (!Array.isArray(raw)) return;
+
+        const mapped = raw
+          .filter((item) => item && String(item.name || '').trim())
+          .map((item) => ({
+            playerId: item._id || item.id || String(item.name).trim(),
+            name: String(item.name).trim(),
+            role: 'student',
+          }));
+
+        if (!cancelled) {
+          setPlayers(mapped);
+        }
+      } catch {
+        // ignore polling errors
+      }
+    };
+
+    syncPlayers();
+    const pollId = setInterval(syncPlayers, 2000);
+
+    return () => {
+      cancelled = true;
+      clearInterval(pollId);
+    };
+  }, [roomId, gameStarted, isDemo]);
   
   // Fallback: poll backend room status every 2s in case socket event is missed
   useEffect(() => {

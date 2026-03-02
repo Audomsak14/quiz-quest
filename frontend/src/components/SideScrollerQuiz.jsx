@@ -21,6 +21,81 @@ function buildSymmetricOffsets(count, gap) {
   return arr;
 }
 
+function normalizeNameKey(name) {
+  return String(name || '').trim().toLowerCase();
+}
+
+function buildRoomProgress(roomPlayers = [], attempts = []) {
+  const activePlayers = roomPlayers
+    .map((player) => ({
+      name: String(player?.name || '').trim(),
+      key: normalizeNameKey(player?.name),
+    }))
+    .filter((player) => player.name && player.key);
+
+  const uniqueByKey = new Map();
+  activePlayers.forEach((player) => {
+    if (!uniqueByKey.has(player.key)) uniqueByKey.set(player.key, player);
+  });
+
+  const bestByPlayer = new Map();
+  (attempts || []).forEach((attempt) => {
+    const key = normalizeNameKey(attempt?.playerName);
+    if (!key || !uniqueByKey.has(key)) return;
+
+    const next = {
+      name: String(attempt?.playerName || uniqueByKey.get(key)?.name || 'ผู้เล่น'),
+      score: Number(attempt?.score || 0),
+      timestamp: attempt?.timestamp ? new Date(attempt.timestamp).getTime() : Number.POSITIVE_INFINITY,
+    };
+
+    const current = bestByPlayer.get(key);
+    if (!current || next.score > current.score || (next.score === current.score && next.timestamp < current.timestamp)) {
+      bestByPlayer.set(key, next);
+    }
+  });
+
+  const rows = Array.from(uniqueByKey.values())
+    .map((player) => {
+      const best = bestByPlayer.get(player.key);
+      return {
+        playerId: player.key,
+        playerName: player.name,
+        finalScore: best ? best.score : 0,
+        done: Boolean(best),
+        timestamp: best ? best.timestamp : Number.POSITIVE_INFINITY,
+      };
+    })
+    .sort((a, b) => {
+      if (a.done !== b.done) return a.done ? -1 : 1;
+      if (b.finalScore !== a.finalScore) return b.finalScore - a.finalScore;
+      if (a.timestamp !== b.timestamp) return a.timestamp - b.timestamp;
+      return a.playerName.localeCompare(b.playerName, 'th');
+    });
+
+  const completedPlayers = rows.filter((row) => row.done).length;
+  const totalPlayers = rows.length;
+  const allDone = totalPlayers > 0 && completedPlayers >= totalPlayers;
+
+  const rankings = rows
+    .filter((row) => row.done)
+    .sort((a, b) => {
+      if (b.finalScore !== a.finalScore) return b.finalScore - a.finalScore;
+      if (a.timestamp !== b.timestamp) return a.timestamp - b.timestamp;
+      return a.playerName.localeCompare(b.playerName, 'th');
+    })
+    .map((row, index) => ({
+      rank: index + 1,
+      playerId: row.playerId,
+      playerName: row.playerName,
+      finalScore: row.finalScore,
+      completionTime: Number.isFinite(row.timestamp) ? row.timestamp : null,
+      questionsAnswered: null,
+    }));
+
+  return { rows, totalPlayers, completedPlayers, allDone, rankings };
+}
+
 // A simple side-scrolling quiz game
 export default function SideScrollerQuiz() {
   const router = useRouter();
@@ -94,7 +169,12 @@ export default function SideScrollerQuiz() {
   const [platforms, setPlatforms] = useState([]);
   const [gameResults, setGameResults] = useState(null);
   const [showRankings, setShowRankings] = useState(false);
+  const [gameCompleted, setGameCompleted] = useState(false);
+  const [localResults, setLocalResults] = useState(null);
+  const [waitingBoard, setWaitingBoard] = useState({ rows: [], totalPlayers: 0, completedPlayers: 0 });
+  const [allPlayersFinished, setAllPlayersFinished] = useState(false);
   const completedOnceRef = useRef(false);
+  const completionSavedRef = useRef(false);
   const [uiTick, setUiTick] = useState(0);
   const lastQuestionOpenAtRef = useRef(0);
   const avatarRef = useRef(null);
@@ -140,6 +220,54 @@ export default function SideScrollerQuiz() {
     try { window.sessionStorage.setItem(`qq:kicked:${roomId}`, "1"); } catch {}
     try { window.location.replace("/StudentDashboard/gameroom"); } catch { window.location.href = "/StudentDashboard/gameroom"; }
   }, [roomId]);
+
+  // Poll room completion while waiting for every player to finish
+  useEffect(() => {
+    if (!gameCompleted || allPlayersFinished || !roomId) return;
+
+    let cancelled = false;
+
+    const loadProgress = async () => {
+      try {
+        const [roomResponse, historyResponse] = await Promise.all([
+          fetch(`http://localhost:5000/api/game/room/${roomId}`, { cache: 'no-store' }),
+          fetch(`http://localhost:5000/api/game/history?roomId=${roomId}&limit=500`, { cache: 'no-store' }),
+        ]);
+
+        if (!roomResponse.ok || !historyResponse.ok) return;
+
+        const roomPayload = await roomResponse.json();
+        const historyPayload = await historyResponse.json();
+        const roomPlayers = Array.isArray(roomPayload?.room?.players) ? roomPayload.room.players : [];
+        const attempts = Array.isArray(historyPayload?.attempts) ? historyPayload.attempts : [];
+
+        const progress = buildRoomProgress(roomPlayers, attempts);
+
+        if (cancelled) return;
+
+        setWaitingBoard({
+          rows: progress.rows,
+          totalPlayers: progress.totalPlayers,
+          completedPlayers: progress.completedPlayers,
+        });
+
+        if (progress.allDone) {
+          setAllPlayersFinished(true);
+          setLocalResults({ roomId, rankings: progress.rankings });
+        }
+      } catch {
+        // ignore polling errors and keep waiting state
+      }
+    };
+
+    loadProgress();
+    const timerId = setInterval(loadProgress, 2000);
+
+    return () => {
+      cancelled = true;
+      clearInterval(timerId);
+    };
+  }, [gameCompleted, allPlayersFinished, roomId]);
 
   // Load questions and build world/platforms symmetrically
   useEffect(() => {
@@ -1122,9 +1250,46 @@ export default function SideScrollerQuiz() {
     if (answeredCount >= total && !completedOnceRef.current) {
       completedOnceRef.current = true;
       const elapsed = gameStartTime ? Date.now() - gameStartTime : undefined;
-      socketManager.completeGame((playerProgress.score + earned), elapsed, answeredCount);
+      const finalScore = playerProgress.score + earned;
+      const finalPlayerId = socketManager.getPlayerId() || providedPlayerId || playerName;
+      setGameCompleted(true);
+      setShowRankings(true);
+
+      const saveCompletion = async () => {
+        if (completionSavedRef.current) return;
+        completionSavedRef.current = true;
+
+        try {
+          await fetch('http://localhost:5000/api/game/history', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              roomId,
+              playerId: finalPlayerId,
+              playerName,
+              score: finalScore,
+            }),
+          });
+        } catch {}
+      };
+
+      saveCompletion();
+
+      if (isConnected) {
+        socketManager.completeGame(finalScore, elapsed, answeredCount);
+      }
     }
-  }, [currentQuestion, answeredStatus, playerProgress, questionSpots.length, gameStartTime]);
+  }, [
+    currentQuestion,
+    answeredStatus,
+    playerProgress,
+    questionSpots.length,
+    gameStartTime,
+    isConnected,
+    roomId,
+    playerName,
+    providedPlayerId,
+  ]);
 
   // HUD + Canvas + Modals
   return (
@@ -1213,24 +1378,35 @@ export default function SideScrollerQuiz() {
         </div>
       )}
 
-      {showRankings && gameResults && (
+      {showRankings && gameCompleted && (
         <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-[60]">
           <div className="bg-white rounded-2xl shadow-2xl p-6 max-w-2xl w-[92%] border border-gray-200">
+            {(() => {
+              const rankingSource = localResults || gameResults;
+              const waitingRows = waitingBoard.rows || [];
+              return (
+              <>
             <div className="mb-4">
-              <div className="text-2xl font-extrabold text-gray-900">🏆 อันดับคะแนน</div>
-              <div className="text-sm text-gray-600">ห้อง {gameResults?.roomId}</div>
+              <div className="text-2xl font-extrabold text-gray-900">{allPlayersFinished ? '🏆 อันดับคะแนนสุดท้าย' : '📋 บอร์ดคะแนน (รอผู้เล่นครบ)'}</div>
+              <div className="text-sm text-gray-600">ห้อง {roomId}</div>
+              {!allPlayersFinished && (
+                <div className="mt-1 text-sm text-amber-700">
+                  รอผู้เล่นตอบครบทุกข้อ: {waitingBoard.completedPlayers}/{waitingBoard.totalPlayers} คน
+                </div>
+              )}
             </div>
             <div className="space-y-2 max-h-[55vh] overflow-y-auto pr-1">
-              {(gameResults.rankings || []).map((r, i) => {
-                const isMe = r.playerId === socketManager.getPlayerId();
-                const secs = Number.isFinite(r?.completionTime) ? (r.completionTime/1000).toFixed(1) : '—';
+              {(allPlayersFinished ? (rankingSource?.rankings || []) : waitingRows).map((r, i) => {
+                const pid = r.playerId || normalizeNameKey(r.playerName);
+                const isMe = normalizeNameKey(r.playerName) === normalizeNameKey(playerName) || pid === socketManager.getPlayerId();
+                const displayRank = allPlayersFinished ? (r.rank <= 3 ? ['1','2','3'][r.rank - 1] : r.rank) : (i + 1);
                 return (
                   <div key={`${r.playerId}-${i}`} className={`p-3 rounded-xl border ${isMe ? 'bg-indigo-50 border-indigo-200' : 'bg-gray-50 border-gray-200'} flex items-center justify-between`}>
                     <div className="flex items-center gap-3">
-                      <div className="w-8 h-8 rounded-full bg-yellow-400 text-white font-bold flex items-center justify-center">{r.rank <= 3 ? ['1','2','3'][r.rank-1] : r.rank}</div>
+                      <div className="w-8 h-8 rounded-full bg-yellow-400 text-white font-bold flex items-center justify-center">{displayRank}</div>
                       <div>
                         <div className="font-bold text-gray-800">{r.playerName}</div>
-                        <div className="text-xs text-gray-600">เวลา: {secs} วินาที</div>
+                        <div className="text-xs text-gray-600">{allPlayersFinished ? 'ตอบครบแล้ว' : (r.done ? 'ตอบครบแล้ว' : 'กำลังทำแบบทดสอบ')}</div>
                       </div>
                     </div>
                     <div className="text-lg font-extrabold text-emerald-700">{r.finalScore} คะแนน</div>
@@ -1241,6 +1417,9 @@ export default function SideScrollerQuiz() {
             <div className="mt-5 flex items-center justify-end gap-2">
               <button onClick={() => router.push('/StudentDashboard/gameroom')} className="px-4 py-2 rounded-xl bg-indigo-600 text-white hover:bg-indigo-700 shadow focus:outline-none focus:ring-2 focus:ring-indigo-300">กลับหน้าห้อง</button>
             </div>
+              </>
+              );
+            })()}
           </div>
         </div>
       )}

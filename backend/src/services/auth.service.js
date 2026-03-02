@@ -51,15 +51,13 @@ const authService = {
 			throw appError('Invalid username or password', 401);
 		}
 
-		if (payload.role && payload.role !== user.role) {
-			throw appError('Role does not match account', 403);
-		}
+		const selectedRole = payload.role || 'student';
 
 		const token = jwt.sign(
 			{
 				sub: String(user.id),
 				username: user.username,
-				role: user.role,
+				role: selectedRole,
 			},
 			JWT_SECRET,
 			{ expiresIn: '7d' }
@@ -70,7 +68,7 @@ const authService = {
 			user: {
 				id: toMongoLikeId(user.id),
 				username: user.username,
-				role: user.role,
+				role: selectedRole,
 			},
 		};
 	},

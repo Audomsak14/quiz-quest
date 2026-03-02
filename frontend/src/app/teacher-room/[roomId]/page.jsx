@@ -58,6 +58,13 @@ export default function TeacherRoomPage() {
 
   const handleStartGame = async () => {
     try {
+	  // ล้างประวัติรอบก่อนของห้องนี้ เพื่อให้นับผลรอบใหม่ได้ถูกต้อง
+	  try {
+		await axios.delete(`http://localhost:5000/api/game/history/room/${roomId}`, withAuth());
+	  } catch (clearErr) {
+		console.warn('Clear room history failed (continue start):', clearErr?.response?.data || clearErr?.message);
+	  }
+
       // อัพเดทสถานะห้องเป็น "active"
       await axios.put(`http://localhost:5000/api/rooms/${roomId}`, {
         status: 'active'

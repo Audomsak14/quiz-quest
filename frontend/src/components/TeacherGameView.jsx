@@ -22,6 +22,25 @@ export default function TeacherGameView() {
   const [spectateOpen, setSpectateOpen] = useState(false);
   const [selectedPlayerId, setSelectedPlayerId] = useState(null);
 
+  const normalizePlayers = useCallback((rawPlayers = [], previous = {}) => {
+    const next = {};
+    rawPlayers.forEach((p, index) => {
+      const pid = p.playerId || p.id || `player-${index}`;
+      const prev = previous[pid] || {};
+      next[pid] = {
+        ...prev,
+        ...p,
+        playerId: pid,
+        name: p.name || p.playerName || prev.name || `ผู้เล่น ${index + 1}`,
+        role: p.role || 'student',
+        x: Number.isFinite(p.x) ? p.x : (Number.isFinite(prev.x) ? prev.x : 420 + (index % 6) * 120),
+        y: Number.isFinite(p.y) ? p.y : (Number.isFinite(prev.y) ? prev.y : 540 - Math.floor(index / 6) * 40),
+        lastSeen: Date.now(),
+      };
+    });
+    return next;
+  }, []);
+
   // Load room info + questions
   useEffect(() => {
     const load = async () => {
@@ -61,6 +80,41 @@ export default function TeacherGameView() {
     };
     load();
   }, [roomId]);
+
+  useEffect(() => {
+    if (!roomId) return;
+
+    let cancelled = false;
+
+    const refreshRoomState = async () => {
+      try {
+        const response = await fetch(`http://localhost:5000/api/game/room/${roomId}`, { cache: 'no-store' });
+        if (!response.ok) return;
+        const payload = await response.json();
+        const room = payload?.room;
+        if (!room) return;
+
+        if (!cancelled) {
+          setRoomInfo((prev) => ({
+            ...(prev || {}),
+            ...room,
+          }));
+          setGameStarted(room.status === 'active');
+          setStudents((prev) => normalizePlayers(Array.isArray(room.players) ? room.players : [], prev));
+        }
+      } catch {
+        // ignore polling errors
+      }
+    };
+
+    refreshRoomState();
+    const timerId = setInterval(refreshRoomState, 2000);
+
+    return () => {
+      cancelled = true;
+      clearInterval(timerId);
+    };
+  }, [roomId, normalizePlayers]);
 
   // Sockets
   useEffect(() => {
@@ -146,6 +200,30 @@ export default function TeacherGameView() {
     if (isConnected && roomId) socketManager.socketEmit("startGame", { roomId });
   };
 
+  const endGameAndKickAll = async () => {
+    try {
+      const token = (typeof window !== 'undefined') ? (sessionStorage.getItem('token') || localStorage.getItem('token')) : null;
+      const headers = { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) };
+
+      await fetch(`http://localhost:5000/api/rooms/${roomId}/kick-all`, {
+        method: 'POST',
+        headers,
+      });
+
+      await fetch(`http://localhost:5000/api/rooms/${roomId}`, {
+        method: 'PUT',
+        headers,
+        body: JSON.stringify({ status: 'ended' }),
+      });
+
+      setGameStarted(false);
+      setRoomInfo((prev) => ({ ...(prev || {}), status: 'ended' }));
+      setStudents({});
+    } catch (error) {
+      console.error('Teacher: failed to end game', error);
+    }
+  };
+
   const toggleCompetition = () => {
     const newVal = !competitionMode;
     setCompetitionMode(newVal);
@@ -227,21 +305,19 @@ export default function TeacherGameView() {
               </div>
             )}
 
-            {!gameStarted && (
-              <button onClick={startGame} disabled={!isConnected} className="bg-gradient-to-r from-emerald-500 to-sky-500 hover:from-emerald-600 hover:to-sky-600 disabled:opacity-50 text-white font-bold py-3 px-6 rounded-2xl transition-all duration-300 transform hover:scale-[1.03] shadow-lg">🚀 เริ่มเกม</button>
-            )}
+            <button
+              onClick={endGameAndKickAll}
+              disabled={!roomId}
+              className="bg-gradient-to-r from-rose-500 to-red-600 hover:from-rose-600 hover:to-red-700 disabled:opacity-50 text-white font-bold py-3 px-6 rounded-2xl transition-all duration-300 transform hover:scale-[1.03] shadow-lg"
+            >🛑 จบเกม</button>
 
             {/* Competition toggle removed per request */}
 
             <button
               onClick={() => { setSpectateOpen(true); setSelectedPlayerId(studentIds[0] || null); }}
-              disabled={!isConnected || studentIds.length === 0}
+              disabled={studentIds.length === 0}
               className="bg-gradient-to-r from-indigo-500 to-purple-500 hover:from-indigo-600 hover:to-purple-600 disabled:opacity-50 text-white font-bold py-3 px-6 rounded-2xl transition-all duration-300 transform hover:scale-[1.03] shadow-lg"
             >👀 โหมดผู้ชม</button>
-
-            {roomInfo?.questionSetId && (
-              <button onClick={() => window.open(`/create-new-set?edit=${roomInfo.questionSetId}`, "_blank")} className="bg-gradient-to-r from-indigo-500 to-purple-500 hover:from-indigo-600 hover:to-purple-600 text-white font-bold py-3 px-6 rounded-2xl transition-all duration-300 transform hover:scale-[1.03] shadow-lg">📝 แก้ไขคำถาม</button>
-            )}
 
             <button
               onClick={backAndKickAll}
@@ -257,7 +333,7 @@ export default function TeacherGameView() {
         <div className="bg-white/90 backdrop-blur-xl rounded-3xl shadow-xl p-6 border border-white/30">
           <h3 className="text-xl font-bold text-gray-800 mb-4 flex items-center"><span className="text-2xl mr-2">👥</span>นักเรียนในห้อง ({displayedStudents.length})</h3>
           <div className="space-y-3">
-            {Object.keys(students).length === 0 ? (
+            {displayedStudents.length === 0 ? (
               <p className="text-gray-500 text-center py-4">ยังไม่มีนักเรียนเข้าร่วม</p>
             ) : (
               displayedStudents.map((s) => (
@@ -270,7 +346,7 @@ export default function TeacherGameView() {
                     </div>
                   </div>
                   <div className="flex items-center gap-2">
-                    <div className={`text-xs px-3 py-1 rounded-full font-medium ${gameStarted ? "bg-emerald-100 text-emerald-700" : "bg-amber-100 text-amber-700"}`}>{gameStarted ? "🎮 กำลังเล่น" : "⏳ รอเริ่มเกม"}</div>
+                    <div className={`text-xs px-3 py-1 rounded-full font-medium ${roomInfo?.status === 'active' ? "bg-emerald-100 text-emerald-700" : "bg-amber-100 text-amber-700"}`}>{roomInfo?.status === 'active' ? "🎮 กำลังเล่น" : "⏳ รอเริ่มเกม"}</div>
                     <button
                       onClick={() => socketManager.socketEmit('kickPlayer', { roomId, playerId: s.playerId })}
                       className="text-sm px-3 py-1 rounded-xl bg-rose-100 text-rose-700 border border-rose-200 hover:bg-rose-200"
@@ -288,11 +364,11 @@ export default function TeacherGameView() {
           <div className="space-y-4">
             <div className="bg-gradient-to-r from-green-50 to-emerald-50 rounded-2xl p-4 border border-emerald-100">
               <div className="text-sm text-green-600 font-semibold">สถานะปัจจุบัน</div>
-              <div className="text-lg font-bold text-green-700">{gameStarted ? "🎮 เกมกำลังดำเนินการ" : "⏳ รอเริ่มเกม"}</div>
+              <div className="text-lg font-bold text-green-700">{roomInfo?.status === 'active' ? "🎮 เกมกำลังดำเนินการ" : "⏳ รอเริ่มเกม"}</div>
             </div>
             <div className="bg-gradient-to-r from-purple-50 to-pink-50 rounded-2xl p-4 border border-pink-100">
               <div className="text-sm text-purple-600 font-semibold">ผู้เล่นที่เข้าร่วม</div>
-              <div className="text-lg font-bold text-purple-700">{Object.keys(students).length} คน</div>
+              <div className="text-lg font-bold text-purple-700">{displayedStudents.length} คน</div>
             </div>
           </div>
         </div>
