@@ -6,7 +6,7 @@ const {
 	roomController,
 	gameController,
 	teacherController,
-} = require('../controllers/index.controller');
+} = require('../controllers');
 const { requireAuth } = require('../middleware/auth.middleware');
 const { validateBody, validateParams } = require('../middleware/validation.middleware');
 
