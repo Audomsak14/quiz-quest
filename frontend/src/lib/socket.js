@@ -13,7 +13,21 @@ class SocketManager {
     this.wasKicked = false;
   }
 
-  connect(serverUrl = 'http://localhost:5000') {
+  resolveServerUrl(explicitServerUrl) {
+    if (explicitServerUrl) return explicitServerUrl;
+    const envUrl = (typeof process !== 'undefined' && process.env?.NEXT_PUBLIC_API_BASE_URL)
+      ? String(process.env.NEXT_PUBLIC_API_BASE_URL)
+      : '';
+    if (envUrl) return envUrl.replace(/\/$/, '');
+    if (typeof window !== 'undefined') {
+      const host = window.location.hostname || 'localhost';
+      return `http://${host}:5000`;
+    }
+    return 'http://localhost:5000';
+  }
+
+  connect(serverUrl) {
+    const resolvedServerUrl = this.resolveServerUrl(serverUrl);
     // Only run on the client/browser
     if (typeof window === 'undefined') {
       console.warn('SocketManager.connect called on the server; skipping.');
@@ -27,7 +41,7 @@ class SocketManager {
     // Dynamic import to avoid SSR bundling issues
     import('socket.io-client')
       .then(({ io }) => {
-        this.socket = io(serverUrl, {
+        this.socket = io(resolvedServerUrl, {
           autoConnect: true,
           reconnection: true,
           reconnectionAttempts: 5,

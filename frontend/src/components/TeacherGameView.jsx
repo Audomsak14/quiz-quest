@@ -2,7 +2,10 @@
 import React, { useEffect, useMemo, useState, useCallback } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import socketManager from "../lib/socket";
-import SpectatorSideScroller from "./SpectatorSideScroller";
+
+function normalizeKey(value) {
+  return String(value || '').trim().toLowerCase();
+}
 
 export default function TeacherGameView() {
   const router = useRouter();
@@ -19,23 +22,28 @@ export default function TeacherGameView() {
   const [roomInfo, setRoomInfo] = useState(null);
   const [students, setStudents] = useState({}); // { playerId: { name, score, x, y, role } }
   const [gameResults, setGameResults] = useState(null);
-  const [spectateOpen, setSpectateOpen] = useState(false);
-  const [selectedPlayerId, setSelectedPlayerId] = useState(null);
 
-  const normalizePlayers = useCallback((rawPlayers = [], previous = {}) => {
+  const normalizePlayers = useCallback((rawPlayers = [], previous = {}, source = 'poll') => {
     const next = {};
+    const now = Date.now();
     rawPlayers.forEach((p, index) => {
       const pid = p.playerId || p.id || `player-${index}`;
       const prev = previous[pid] || {};
+      const previousScore = Number(prev.score || 0);
+      const incomingScore = Number(p.score || 0);
+      const hasIncomingScore = Number.isFinite(incomingScore) && incomingScore > 0;
+      const isSocketLike = source === 'socket';
       next[pid] = {
         ...prev,
         ...p,
         playerId: pid,
         name: p.name || p.playerName || prev.name || `ผู้เล่น ${index + 1}`,
+        score: hasIncomingScore ? incomingScore : previousScore,
         role: p.role || 'student',
         x: Number.isFinite(p.x) ? p.x : (Number.isFinite(prev.x) ? prev.x : 420 + (index % 6) * 120),
         y: Number.isFinite(p.y) ? p.y : (Number.isFinite(prev.y) ? prev.y : 540 - Math.floor(index / 6) * 40),
-        lastSeen: Date.now(),
+        lastSeen: isSocketLike ? now : (prev.lastSeen || now),
+        isConnected: isSocketLike ? true : (typeof prev.isConnected === 'boolean' ? prev.isConnected : true),
       };
     });
     return next;
@@ -100,7 +108,7 @@ export default function TeacherGameView() {
             ...room,
           }));
           setGameStarted(room.status === 'active');
-          setStudents((prev) => normalizePlayers(Array.isArray(room.players) ? room.players : [], prev));
+          setStudents((prev) => normalizePlayers(Array.isArray(room.players) ? room.players : [], prev, 'poll'));
         }
       } catch {
         // ignore polling errors
@@ -131,21 +139,41 @@ export default function TeacherGameView() {
       if (data?.status) setGameStarted(data.status === "active");
       if (typeof data?.competition !== 'undefined') setCompetitionMode(!!data.competition);
       if (Array.isArray(data?.players)) {
-        const obj = {};
-        data.players.forEach((p) => {
-          if (p.role !== 'teacher') obj[p.playerId] = { ...p, lastSeen: Date.now() };
-        });
-        setStudents(obj);
+        setStudents((prev) => normalizePlayers(data.players.filter((p) => p.role !== 'teacher'), prev, 'socket'));
       }
     };
 
     const onPlayerJoined = (p) => {
       if (p?.role === "teacher") return;
-      setStudents((prev) => ({ ...prev, [p.playerId]: { ...(prev[p.playerId] || {}), ...p, lastSeen: Date.now() } }));
+      setStudents((prev) => ({ ...prev, [p.playerId]: { ...(prev[p.playerId] || {}), ...p, lastSeen: Date.now(), isConnected: true } }));
     };
 
     const onPlayerMoved = (p) => {
-      setStudents((prev) => ({ ...prev, [p.playerId]: { ...(prev[p.playerId] || {}), ...p, lastSeen: Date.now() } }));
+      setStudents((prev) => ({ ...prev, [p.playerId]: { ...(prev[p.playerId] || {}), ...p, lastSeen: Date.now(), isConnected: true } }));
+    };
+
+    const onQuestionAnswered = (payload = {}) => {
+      const pid = payload?.playerId;
+      if (!pid) return;
+      const earned = Number(payload?.earned);
+      const scoreDelta = Number.isFinite(earned)
+        ? earned
+        : (payload?.correct ? 100 : 0);
+      setStudents((prev) => {
+        const current = prev[pid] || {};
+        const currentScore = Number(current.score || 0);
+        return {
+          ...prev,
+          [pid]: {
+            ...current,
+            playerId: pid,
+            name: current.name || payload?.playerName || payload?.name || 'ผู้เล่น',
+            score: currentScore + scoreDelta,
+            lastSeen: Date.now(),
+            isConnected: true,
+          },
+        };
+      });
     };
 
     const onGameStarted = () => {
@@ -167,9 +195,14 @@ export default function TeacherGameView() {
       if (!pid) return;
       setStudents((prev) => {
         if (!prev[pid]) return prev;
-        const copy = { ...prev };
-        delete copy[pid];
-        return copy;
+        return {
+          ...prev,
+          [pid]: {
+            ...prev[pid],
+            isConnected: false,
+            leftAt: Date.now(),
+          },
+        };
       });
     };
 
@@ -177,6 +210,7 @@ export default function TeacherGameView() {
     socketManager.on("roomState", onRoomState);
     socketManager.on("playerJoined", onPlayerJoined);
     socketManager.on("playerMoved", onPlayerMoved);
+    socketManager.on("questionAnswered", onQuestionAnswered);
     socketManager.on("gameStarted", onGameStarted);
   socketManager.on("competitionMode", onCompetitionMode);
     socketManager.on("gameResults", onGameResults);
@@ -188,13 +222,92 @@ export default function TeacherGameView() {
     };
   }, [roomId, playerName]);
 
-  const studentIds = useMemo(() => Object.keys(students || {}), [students]);
-  const cycleSelection = useCallback((dir) => {
-    if (studentIds.length === 0) return;
-    const idx = selectedPlayerId ? Math.max(0, studentIds.indexOf(selectedPlayerId)) : -1;
-    const nextIdx = (idx + dir + studentIds.length) % studentIds.length;
-    setSelectedPlayerId(studentIds[nextIdx]);
-  }, [studentIds, selectedPlayerId]);
+  // Pull latest scores from persisted history so teacher UI always reflects actual score.
+  useEffect(() => {
+    if (!roomId) return;
+    let cancelled = false;
+
+    const refreshScores = async () => {
+      try {
+        const response = await fetch(`http://localhost:5000/api/game/history?roomId=${roomId}&limit=500`, { cache: 'no-store' });
+        if (!response.ok) return;
+        const payload = await response.json();
+        const attempts = Array.isArray(payload?.attempts) ? payload.attempts : [];
+
+        const bestById = new Map();
+        const bestByName = new Map();
+        attempts.forEach((attempt) => {
+          const score = Number(attempt?.score || 0);
+          const idKey = normalizeKey(attempt?.playerId);
+          const nameKey = normalizeKey(attempt?.playerName);
+          if (idKey) {
+            const prev = Number(bestById.get(idKey) || 0);
+            if (score > prev) bestById.set(idKey, score);
+          }
+          if (nameKey) {
+            const prev = Number(bestByName.get(nameKey) || 0);
+            if (score > prev) bestByName.set(nameKey, score);
+          }
+        });
+
+        if (cancelled) return;
+        setStudents((prev) => {
+          const next = { ...prev };
+          Object.keys(next).forEach((pid) => {
+            const student = next[pid] || {};
+            const idKey = normalizeKey(pid);
+            const nameKey = normalizeKey(student.name);
+            const score = Number(bestById.get(idKey) ?? bestByName.get(nameKey) ?? student.score ?? 0);
+            next[pid] = { ...student, score };
+          });
+          return next;
+        });
+      } catch {
+        // ignore score polling errors
+      }
+    };
+
+    refreshScores();
+    const timer = setInterval(refreshScores, 2000);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
+  }, [roomId]);
+
+  // Mark stale players as disconnected and prune long-gone students from the list.
+  useEffect(() => {
+    const OFFLINE_AFTER_MS = 8000;
+    const PRUNE_AFTER_MS = 45000;
+
+    const timer = setInterval(() => {
+      const now = Date.now();
+      setStudents((prev) => {
+        let changed = false;
+        const next = {};
+
+        Object.entries(prev).forEach(([pid, student]) => {
+          const lastSeen = Number(student?.lastSeen || 0);
+          const wasConnected = student?.isConnected !== false;
+          const stale = lastSeen > 0 && now - lastSeen > OFFLINE_AFTER_MS;
+          const leftAt = Number(student?.leftAt || 0);
+          const shouldPrune = leftAt > 0 && now - leftAt > PRUNE_AFTER_MS;
+          if (shouldPrune) {
+            changed = true;
+            return;
+          }
+
+          const isConnected = stale ? false : wasConnected;
+          if (isConnected !== wasConnected) changed = true;
+          next[pid] = { ...student, isConnected };
+        });
+
+        return changed ? next : prev;
+      });
+    }, 2000);
+
+    return () => clearInterval(timer);
+  }, []);
 
   const startGame = () => {
     if (isConnected && roomId) socketManager.socketEmit("startGame", { roomId });
@@ -314,12 +427,6 @@ export default function TeacherGameView() {
             {/* Competition toggle removed per request */}
 
             <button
-              onClick={() => { setSpectateOpen(true); setSelectedPlayerId(studentIds[0] || null); }}
-              disabled={studentIds.length === 0}
-              className="bg-gradient-to-r from-indigo-500 to-purple-500 hover:from-indigo-600 hover:to-purple-600 disabled:opacity-50 text-white font-bold py-3 px-6 rounded-2xl transition-all duration-300 transform hover:scale-[1.03] shadow-lg"
-            >👀 โหมดผู้ชม</button>
-
-            <button
               onClick={backAndKickAll}
               className="bg-gradient-to-r from-slate-600 to-slate-700 hover:from-slate-700 hover:to-slate-800 text-white font-bold py-3 px-6 rounded-2xl transition-all duration-300 transform hover:scale-[1.03] shadow-lg"
             >🏠 กลับหน้าหลัก</button>
@@ -346,7 +453,9 @@ export default function TeacherGameView() {
                     </div>
                   </div>
                   <div className="flex items-center gap-2">
-                    <div className={`text-xs px-3 py-1 rounded-full font-medium ${roomInfo?.status === 'active' ? "bg-emerald-100 text-emerald-700" : "bg-amber-100 text-amber-700"}`}>{roomInfo?.status === 'active' ? "🎮 กำลังเล่น" : "⏳ รอเริ่มเกม"}</div>
+                    <div className={`text-xs px-3 py-1 rounded-full font-medium ${s.isConnected === false ? "bg-gray-200 text-gray-700" : "bg-emerald-100 text-emerald-700"}`}>
+                      {s.isConnected === false ? "⚪ ออฟไลน์" : "🟢 เชื่อมต่ออยู่"}
+                    </div>
                     <button
                       onClick={() => socketManager.socketEmit('kickPlayer', { roomId, playerId: s.playerId })}
                       className="text-sm px-3 py-1 rounded-xl bg-rose-100 text-rose-700 border border-rose-200 hover:bg-rose-200"
@@ -426,19 +535,6 @@ export default function TeacherGameView() {
           </div>
         )}
       </div>
-
-      {/* Spectator overlay */}
-      {spectateOpen && (
-        <SpectatorSideScroller
-          roomId={roomId}
-          players={students}
-          questions={roomInfo?.questions || []}
-          selectedPlayerId={selectedPlayerId}
-          onClose={() => setSpectateOpen(false)}
-          onPrev={() => cycleSelection(-1)}
-          onNext={() => cycleSelection(1)}
-        />
-      )}
     </div>
   );
 }
