@@ -3,6 +3,7 @@ import { useState, useEffect } from "react";
 import Swal from "sweetalert2";
 import { useRouter } from "next/navigation";
 import { profileStorage } from "@/lib/profileStorage";
+import { getAuthSession } from "@/lib/auth";
 
 export default function StudentDashboard() {
   const router = useRouter();
@@ -11,9 +12,6 @@ export default function StudentDashboard() {
   const [selectedCharacterEmoji, setSelectedCharacterEmoji] = useState("👨‍🎓");
   const [playerName, setPlayerName] = useState("นักเรียน");
   const [characterImage, setCharacterImage] = useState(null);
-  const [showEditProfile, setShowEditProfile] = useState(false);
-  const [tempPlayerName, setTempPlayerName] = useState("");
-  const [tempPlayerImage, setTempPlayerImage] = useState(null);
 
   // History / Stats
   const [historyLoading, setHistoryLoading] = useState(false);
@@ -104,6 +102,20 @@ export default function StudentDashboard() {
 
   useEffect(() => {
     setIsClient(true);
+
+    // Login session: block dashboard if not logged in
+    try {
+      const { token, role } = getAuthSession();
+      if (!token) {
+        router.replace('/login');
+        return;
+      }
+      if (role === 'teacher') {
+        router.replace('/TeacherDashboard');
+        return;
+      }
+    } catch {}
+
     loadCharacterData();
 
     // ตั้ง interval เพื่อเช็คการเปลี่ยนแปลงทุกๆ 1 วินาที
@@ -286,7 +298,9 @@ export default function StudentDashboard() {
   // Derived stats
   const attempts = Array.isArray(history?.attempts) ? history.attempts : [];
   const totalAttempts = Number.isFinite(history?.summary?.totalAttempts) ? history.summary.totalAttempts : attempts.length;
-  const avgScore = Number.isFinite(history?.summary?.averageScore) ? history.summary.averageScore : 0;
+  const avgScore = Number.isFinite(history?.summary?.averageScorePercent)
+    ? history.summary.averageScorePercent
+    : (Number.isFinite(history?.summary?.averageScore) ? Math.min(100, Math.max(0, history.summary.averageScore)) : 0);
   const bestRankEntry = attempts
     .filter(a => Number.isFinite(a?.rank) && Number.isFinite(a?.totalPlayers) && a.rank > 0 && a.totalPlayers > 0)
     .sort((a, b) => (a.rank - b.rank) || (a.totalPlayers - b.totalPlayers))[0];
@@ -295,41 +309,6 @@ export default function StudentDashboard() {
 
   const handleCharacterSelection = () => {
     router.push('/StudentDashboard/character');
-  };
-
-  // ฟังก์ชันเปิด modal แก้ไขข้อมูล
-  const openEditProfile = () => {
-    setTempPlayerName(playerName);
-    setTempPlayerImage(characterImage);
-    setShowEditProfile(true);
-  };
-
-  // ฟังก์ชันจัดการอัปโหลดรูปภาพ
-  const handleImageUpload = (e) => {
-    const file = e.target.files[0];
-    if (file) {
-      const reader = new FileReader();
-      reader.onload = (e) => {
-        setTempPlayerImage(e.target.result);
-      };
-      reader.readAsDataURL(file);
-    }
-  };
-
-  // ฟังก์ชันบันทึกข้อมูล
-  const handleSaveProfile = () => {
-    if (tempPlayerName.trim()) {
-      setPlayerName(tempPlayerName);
-      profileStorage.setName(tempPlayerName);
-    }
-    if (tempPlayerImage && tempPlayerImage !== characterImage) {
-      setCharacterImage(tempPlayerImage);
-      profileStorage.setImage(tempPlayerImage);
-      localStorage.setItem('selectedCharacterImage', tempPlayerImage);
-    }
-    setShowEditProfile(false);
-    setTempPlayerName("");
-    setTempPlayerImage(null);
   };
 
   // ฟังก์ชันไปหน้าห้องเกม
@@ -547,7 +526,7 @@ export default function StudentDashboard() {
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-b from-[#030637] via-[#180161] to-[#FF204E] p-6 relative overflow-hidden">
+    <div className="min-h-screen bg-gradient-to-b from-[#030637] via-[#180161] to-[#FF204E] p-4 md:p-6 relative overflow-hidden">
       {/* Animated Background Elements */}
       <div className="absolute inset-0">
         <div className="absolute top-10 left-10 w-72 h-72 bg-pink-500/10 rounded-full blur-3xl animate-pulse"></div>
@@ -556,14 +535,14 @@ export default function StudentDashboard() {
       </div>
 
       {/* Header */}
-      <div className="relative bg-white/5 backdrop-blur-xl rounded-2xl shadow-2xl p-6 md:p-8 mb-8 border border-white/10">
+      <div className="relative bg-white/5 backdrop-blur-xl rounded-2xl shadow-2xl p-5 md:p-6 mb-6 border border-white/10">
         <div className="flex justify-between items-center">
           <div className="flex items-center gap-4">
             <div className="hidden sm:flex items-center justify-center w-12 h-12 rounded-xl bg-gradient-to-br from-fuchsia-500/70 to-violet-500/70 border border-white/20 shadow-md">
               <span className="text-2xl">🎓</span>
             </div>
             <div>
-              <h1 className="text-3xl md:text-4xl font-extrabold tracking-tight text-white mb-1 drop-shadow">แดชบอร์ดนักเรียน</h1>
+              <h1 className="text-2xl md:text-3xl font-extrabold tracking-tight text-white mb-1 drop-shadow">แดชบอร์ดนักเรียน</h1>
               <div className="flex flex-col md:flex-row md:items-center md:gap-3">
                 <p className="text-pink-200 font-medium">ยินดีต้อนรับ {playerName}</p>
                 <p className="text-blue-200 text-sm">ตัวละคร: {selectedCharacterName}</p>
@@ -572,7 +551,7 @@ export default function StudentDashboard() {
           </div>
           <button
             onClick={handleLogout}
-            className="bg-gradient-to-r from-red-500 to-pink-500 hover:from-red-600 hover:to-pink-600 text-white font-semibold py-3 px-6 md:px-8 rounded-xl transition-all duration-300 shadow-lg hover:shadow-xl border border-white/20"
+            className="bg-gradient-to-r from-red-500 to-pink-500 hover:from-red-600 hover:to-pink-600 text-white font-semibold py-2.5 px-5 md:px-7 rounded-xl transition-all duration-300 shadow-lg hover:shadow-xl border border-white/20"
           >
             🚪 ออกจากระบบ
           </button>
@@ -590,33 +569,33 @@ export default function StudentDashboard() {
       </div>
 
       {/* Main Content Cards */}
-      <div className="relative grid md:grid-cols-2 gap-6 mb-10">
+      <div className="relative grid md:grid-cols-2 gap-6 mb-6">
         {/* แบบทดสอบ */}
-        <div className="bg-white/5 backdrop-blur-xl rounded-2xl shadow-2xl p-8 text-center transition-all duration-300 border border-white/10 group hover:shadow-[0_20px_60px_rgba(0,0,0,0.35)] hover:-translate-y-1">
-          <div className="w-20 h-20 bg-gradient-to-br from-blue-400 to-purple-600 rounded-full flex items-center justify-center mx-auto mb-4 shadow-lg group-hover:shadow-xl transition-all duration-300">
-            <svg className="w-10 h-10 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <div className="bg-white/5 backdrop-blur-xl rounded-2xl shadow-2xl p-6 text-center transition-all duration-300 border border-white/10 group hover:shadow-[0_20px_60px_rgba(0,0,0,0.35)] hover:-translate-y-1">
+          <div className="w-16 h-16 bg-gradient-to-br from-blue-400 to-purple-600 rounded-full flex items-center justify-center mx-auto mb-3 shadow-lg group-hover:shadow-xl transition-all duration-300">
+            <svg className="w-8 h-8 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
             </svg>
           </div>
-          <h2 className="text-2xl font-bold text-white mb-2 drop-shadow-lg">แบบทดสอบ</h2>
-          <p className="text-blue-200 mb-4">เข้าร่วมแบบทดสอบออนไลน์</p>
+          <h2 className="text-xl md:text-2xl font-bold text-white mb-2 drop-shadow-lg">แบบทดสอบ</h2>
+          <p className="text-blue-200 mb-3">เข้าร่วมแบบทดสอบออนไลน์</p>
           <button 
             onClick={() => router.push('/StudentDashboard/gameroom')}
-            className="bg-gradient-to-r from-blue-500 to-purple-600 hover:from-blue-600 hover:to-purple-700 text-white font-semibold py-3 px-6 rounded-xl shadow-lg hover:shadow-xl transition-all duration-300 border border-white/20"
+            className="bg-gradient-to-r from-blue-500 to-purple-600 hover:from-blue-600 hover:to-purple-700 text-white font-semibold py-2.5 px-6 rounded-xl shadow-lg hover:shadow-xl transition-all duration-300 border border-white/20"
           >
             เข้าร่วมแบบทดสอบ
           </button>
         </div>
 
         {/* เลือกตัวละคร */}
-        <div className="bg-white/5 backdrop-blur-xl rounded-2xl shadow-2xl p-8 text-center transition-all duration-300 border border-white/10 group hover:shadow-[0_20px_60px_rgba(0,0,0,0.35)] hover:-translate-y-1">
-          <FullCharacterPreview className="mx-auto mb-4" />
-          <h2 className="text-2xl font-bold text-white mb-2 drop-shadow-lg">เลือกตัวละคร</h2>
+        <div className="bg-white/5 backdrop-blur-xl rounded-2xl shadow-2xl p-6 text-center transition-all duration-300 border border-white/10 group hover:shadow-[0_20px_60px_rgba(0,0,0,0.35)] hover:-translate-y-1">
+          <FullCharacterPreview widthClass="w-24" heightClass="h-36" className="mx-auto mb-3" />
+          <h2 className="text-xl md:text-2xl font-bold text-white mb-2 drop-shadow-lg">เลือกตัวละคร</h2>
           <p className="text-pink-200 mb-2">จัดการตัวละครของคุณ</p>
-          <p className="text-pink-300 text-sm mb-4">ปัจจุบัน: {selectedCharacterName}</p>
+          <p className="text-pink-300 text-sm mb-3">ปัจจุบัน: {selectedCharacterName}</p>
           <button 
             onClick={handleCharacterSelection}
-            className="bg-gradient-to-r from-red-400 to-pink-500 hover:from-red-500 hover:to-pink-600 text-white font-semibold py-3 px-6 rounded-xl shadow-lg hover:shadow-xl transition-all duration-300 border border-white/20"
+            className="bg-gradient-to-r from-red-400 to-pink-500 hover:from-red-500 hover:to-pink-600 text-white font-semibold py-2.5 px-6 rounded-xl shadow-lg hover:shadow-xl transition-all duration-300 border border-white/20"
           >
             แก้ไขตัวละคร
           </button>
@@ -624,51 +603,24 @@ export default function StudentDashboard() {
       </div>
 
       {/* ข้อมูลผู้เล่นและตัวละคร */}
-      <div className="relative grid md:grid-cols-2 gap-6 mb-8">
-        {/* ข้อมูลผู้เล่น */}
-        <div className="bg-gradient-to-br from-blue-500/10 via-purple-500/10 to-pink-500/10 backdrop-blur-xl rounded-2xl shadow-2xl p-6 border border-white/20">
-          <h3 className="text-xl font-bold text-white mb-4 flex items-center justify-between drop-shadow-lg">
-            <span className="flex items-center">
-              <span className="mr-2">👤</span>
-              ข้อมูลผู้เล่น
-            </span>
-            <button
-              onClick={openEditProfile}
-              className="text-pink-300 hover:text-pink-100 text-sm font-medium hover:underline transition-colors"
-            >
-              แก้ไข
-            </button>
-          </h3>
-          <div>
-            <p className="text-lg font-semibold text-white drop-shadow">{playerName}</p>
-            <p className="text-blue-200">ตัวละคร: {selectedCharacterName}</p>
-            {/* Removed image source line per user request */}
-            <button
-              onClick={openEditProfile}
-              className="mt-2 text-xs text-pink-300 hover:text-pink-100 font-medium hover:underline transition-colors"
-            >
-              คลิกเพื่อแก้ไขข้อมูล
-            </button>
-          </div>
-        </div>
-
+      <div className="relative grid md:grid-cols-1 gap-6 mb-8">
         {/* สถิติการเล่น */}
-        <div className="bg-gradient-to-br from-pink-500/10 via-purple-500/10 to-blue-500/10 backdrop-blur-xl rounded-2xl shadow-2xl p-6 border border-white/20">
+        <div className="bg-gradient-to-br from-pink-500/10 via-purple-500/10 to-blue-500/10 backdrop-blur-xl rounded-2xl shadow-2xl p-5 border border-white/20">
           <h3 className="text-xl font-bold text-white mb-4 flex items-center drop-shadow-lg">
             <span className="mr-2">📊</span>
             สถิติการเล่น
           </h3>
-          <div className="grid grid-cols-2 gap-4">
-            <div className="text-center p-4 bg-blue-500/20 rounded-xl border border-blue-400/30 backdrop-blur-sm">
-              <div className="text-2xl font-bold text-blue-300">{historyLoading ? '…' : totalAttempts}</div>
+          <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+            <div className="text-center p-3 bg-blue-500/20 rounded-xl border border-blue-400/30 backdrop-blur-sm">
+              <div className="text-xl md:text-2xl font-bold text-blue-300">{historyLoading ? '…' : totalAttempts}</div>
               <div className="text-sm text-blue-200">แบบทดสอบที่ทำ</div>
             </div>
-            <div className="text-center p-4 bg-green-500/20 rounded-xl border border-green-400/30 backdrop-blur-sm">
-              <div className="text-2xl font-bold text-green-300">{historyLoading ? '…' : avgScore}</div>
+            <div className="text-center p-3 bg-green-500/20 rounded-xl border border-green-400/30 backdrop-blur-sm">
+              <div className="text-xl md:text-2xl font-bold text-green-300">{historyLoading ? '…' : `${avgScore}%`}</div>
               <div className="text-sm text-green-200">คะแนนเฉลี่ย</div>
             </div>
-            <div className="text-center p-4 bg-pink-500/20 rounded-xl border border-pink-400/30 backdrop-blur-sm">
-              <div className="text-2xl font-bold text-pink-300">{historyLoading ? '…' : rankLabel}</div>
+            <div className="text-center p-3 bg-pink-500/20 rounded-xl border border-pink-400/30 backdrop-blur-sm">
+              <div className="text-xl md:text-2xl font-bold text-pink-300">{historyLoading ? '…' : rankLabel}</div>
               <div className="text-sm text-pink-200">อันดับ</div>
             </div>
           </div>
@@ -698,17 +650,21 @@ export default function StudentDashboard() {
               const rankText = (Number.isFinite(att?.rank) && Number.isFinite(att?.totalPlayers) && att.rank && att.totalPlayers)
                 ? ` • อันดับ ${att.rank}/${att.totalPlayers}`
                 : '';
+              const score = att?.finalScore ?? att?.score ?? 0;
+              const roomName = (att?.roomName && att.roomName !== 'ห้องสำหรับชุดคำถาม') ? att.roomName : null;
+              const title = att?.questionSetTitle || roomName || 'แบบทดสอบ';
+              const subtitle = att?.questionSetTitle && att.questionSetTitle !== title ? att.questionSetTitle : null;
               const delKey = `${att?.roomId || 'room'}-${att?.timestamp || idx}-${att?.playerId || att?.playerName || 'me'}`;
               return (
                 <div key={`${att.roomId || 'room'}-${att.timestamp || idx}`} className="backdrop-blur-md bg-white/10 rounded-2xl p-4 border border-white/20 flex items-center justify-between">
                   <div className="min-w-0">
-                    <div className="text-white font-semibold truncate">{att.roomName || 'ห้องแบบทดสอบ'}</div>
-                    <div className="text-blue-200 text-sm truncate">{att.questionSetTitle || 'ชุดข้อสอบ'}</div>
+                    <div className="text-white font-semibold truncate">{title}</div>
+                    <div className="text-blue-200 text-sm truncate">{subtitle || ''}</div>
                     <div className="text-white/70 text-xs">{when}{rankText}</div>
                   </div>
                   <div className="text-right ml-4 shrink-0 flex flex-col items-end gap-2">
                     <div>
-                      <div className="text-2xl font-bold text-green-300">{att.finalScore ?? 0}</div>
+                      <div className="text-2xl font-bold text-green-300">{score}</div>
                       <div className="text-xs text-green-200">คะแนน</div>
                     </div>
                     <button
@@ -762,76 +718,6 @@ export default function StudentDashboard() {
         </button>
       </div>
 
-      {/* Edit Profile Modal */}
-      {showEditProfile && (
-        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center p-4 z-50">
-          <div className="bg-gradient-to-br from-white/90 to-white/80 backdrop-blur-xl rounded-2xl p-6 w-full max-w-md shadow-2xl border border-white/20">
-            <h3 className="text-xl font-bold text-gray-800 mb-4">แก้ไขข้อมูลผู้เล่น</h3>
-            
-            {/* Avatar Preview */}
-            <div className="flex justify-center mb-4">
-              <div className="w-24 h-24 bg-gradient-to-br from-purple-400 to-pink-500 rounded-full flex items-center justify-center text-4xl relative overflow-hidden shadow-lg">
-                {tempPlayerImage && tempPlayerImage.startsWith('data:') ? (
-                  <img 
-                    src={tempPlayerImage} 
-                    alt="Temp Avatar" 
-                    className="w-full h-full object-cover"
-                  />
-                ) : (
-                  <span>{selectedCharacterEmoji}</span>
-                )}
-              </div>
-            </div>
-
-            {/* Name Input */}
-            <div className="mb-4">
-              <label className="block text-gray-700 text-sm font-bold mb-2">
-                ชื่อผู้เล่น
-              </label>
-              <input
-                type="text"
-                placeholder="กรอกชื่อผู้เล่น"
-                value={tempPlayerName}
-                onChange={(e) => setTempPlayerName(e.target.value)}
-                className="w-full p-3 border border-gray-300 rounded-xl text-gray-800 focus:ring-2 focus:ring-purple-500 focus:border-transparent backdrop-blur-sm bg-white/80"
-              />
-            </div>
-
-            {/* Image Upload */}
-            <div className="mb-6">
-              <label className="block text-gray-700 text-sm font-bold mb-2">
-                รูปโปรไฟล์
-              </label>
-              <input
-                type="file"
-                accept="image/*"
-                onChange={handleImageUpload}
-                className="w-full p-3 border border-gray-300 rounded-xl text-gray-800 focus:ring-2 focus:ring-purple-500 focus:border-transparent backdrop-blur-sm bg-white/80"
-              />
-              <p className="text-gray-500 text-xs mt-1">อัปโหลดรูปภาพ (JPG, PNG, GIF)</p>
-            </div>
-
-            <div className="flex space-x-3">
-              <button
-                onClick={() => {
-                  setShowEditProfile(false);
-                  setTempPlayerName("");
-                  setTempPlayerImage(null);
-                }}
-                className="flex-1 bg-gradient-to-r from-gray-500 to-gray-600 hover:from-gray-600 hover:to-gray-700 text-white font-bold py-3 px-4 rounded-xl transition-all duration-300 shadow-lg hover:shadow-xl transform hover:scale-105"
-              >
-                ยกเลิก
-              </button>
-              <button
-                onClick={handleSaveProfile}
-                className="flex-1 bg-gradient-to-r from-purple-500 to-pink-500 hover:from-purple-600 hover:to-pink-600 text-white font-bold py-3 px-4 rounded-xl transition-all duration-300 shadow-lg hover:shadow-xl transform hover:scale-105"
-              >
-                บันทึก
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 }

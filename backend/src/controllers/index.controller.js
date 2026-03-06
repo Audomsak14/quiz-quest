@@ -93,6 +93,20 @@ const roomController = {
 		const result = await roomService.kickAll(Number(req.params.roomId));
 		res.json({ success: true, ...result });
 	}),
+
+	kickPlayer: asyncHandler(async (req, res) => {
+		const roomId = Number(req.params.roomId);
+		const playerId = Number(req.params.playerId);
+		const result = await roomService.kickPlayer(roomId, playerId);
+		res.json({ success: true, ...result });
+	}),
+
+	leave: asyncHandler(async (req, res) => {
+		const roomId = Number(req.params.roomId);
+		const playerId = Number(req.params.playerId);
+		const result = await roomService.leaveRoom(roomId, playerId);
+		res.json({ success: true, ...result });
+	}),
 };
 
 const gameController = {
@@ -111,8 +125,28 @@ const gameController = {
 		res.json({ success: true, ...data });
 	}),
 
+	getResults: asyncHandler(async (req, res) => {
+		const data = await gameService.getResults(Number(req.params.roomId));
+		res.json({ success: true, ...data });
+	}),
+
 	deleteHistory: asyncHandler(async (req, res) => {
 		const result = await gameService.deleteHistory(req.query);
+		res.json({ success: true, ...result });
+	}),
+
+	complete: asyncHandler(async (req, res) => {
+		const result = await gameService.complete(req.body);
+		res.json({ success: true, ...result });
+	}),
+
+	upsertState: asyncHandler(async (req, res) => {
+		const result = await gameService.upsertLiveState(req.body);
+		res.json({ success: true, ...result });
+	}),
+
+	getState: asyncHandler(async (req, res) => {
+		const result = await gameService.getLiveState(Number(req.params.roomId));
 		res.json({ success: true, ...result });
 	}),
 };

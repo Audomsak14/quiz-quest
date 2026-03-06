@@ -3,7 +3,7 @@ import { useState, useEffect } from "react";
 import Swal from "sweetalert2";
 import { useRouter } from "next/navigation";
 import axios from "axios";
-import { withAuth } from "../../lib/auth";
+import { withAuth, clearAuthSession, getAuthSession } from "../../lib/auth";
 
 export default function TeacherDashboard() {
   const router = useRouter();
@@ -16,8 +16,17 @@ export default function TeacherDashboard() {
   });
 
   useEffect(() => {
+    const { token, role } = getAuthSession();
+    if (!token) {
+      router.replace('/login');
+      return;
+    }
+    if (role && role !== 'teacher') {
+      router.replace('/StudentDashboard');
+      return;
+    }
     loadDashboard();
-  }, []);
+  }, [router]);
 
   const loadDashboard = async () => {
     setIsLoading(true);
@@ -28,9 +37,11 @@ export default function TeacherDashboard() {
       ]);
       setQuestionSets(Array.isArray(setsRes.data) ? setsRes.data : []);
       const stats = statsRes.data?.stats || {};
+      const avgRaw = Number(stats.averageScorePercent);
+      const avgClamped = Number.isFinite(avgRaw) ? Math.min(100, Math.max(0, avgRaw)) : 0;
       setDashboardStats({
         studentsJoined: Number.isFinite(stats.studentsJoined) ? stats.studentsJoined : 0,
-        averageScorePercent: Number.isFinite(stats.averageScorePercent) ? stats.averageScorePercent : 0,
+        averageScorePercent: Number(avgClamped.toFixed(2)),
         testsToday: Number.isFinite(stats.testsToday) ? stats.testsToday : 0,
       });
     } catch (err) {
@@ -71,10 +82,12 @@ export default function TeacherDashboard() {
 
   const handleCreateRoom = async (setId) => {
     try {
+      const set = (questionSets || []).find((s) => String(s?.id) === String(setId));
+      const roomName = (set?.title || '').trim();
       const response = await axios.post('http://localhost:5000/api/rooms', {
         questionSetId: setId,
-        name: `ห้องสำหรับชุดคำถาม`,
-        isActive: true
+        ...(roomName ? { name: roomName } : {}),
+        isActive: true,
       }, withAuth());
       
       // Redirect ไปหน้าจัดการห้องของครู
@@ -91,8 +104,7 @@ export default function TeacherDashboard() {
   };
 
   const handleLogout = async () => {
-    localStorage.removeItem('token');
-    localStorage.removeItem('user');
+    clearAuthSession();
     await Swal.fire({ icon: 'success', title: 'ออกจากระบบสำเร็จ', timer: 1200, showConfirmButton: false });
     router.push('/login');
   };

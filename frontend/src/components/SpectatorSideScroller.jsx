@@ -1,5 +1,5 @@
 "use client";
-import React, { useMemo } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 
 // Read-only spectator for the side-scrolling quiz
 // Props: roomId, players (map), questions (array), selectedPlayerId, onClose, onPrev, onNext
@@ -67,6 +67,75 @@ export default function SpectatorSideScroller({ roomId, players = {}, questions 
 
   // Spectator view is purely driven by props from TeacherGameView (which subscribes to sockets)
   const effectivePlayers = players || {};
+
+  // Smooth incoming polled positions so movement doesn't look choppy.
+  const targetsRef = useRef({}); // { [playerId]: { x, y } }
+  const lastTsRef = useRef(0);
+  const rafRef = useRef(null);
+  const [smoothedPos, setSmoothedPos] = useState({}); // { [playerId]: { x, y } }
+
+  useEffect(() => {
+    // Update targets when props change.
+    const nextTargets = {};
+    Object.values(effectivePlayers).forEach((p) => {
+      const pid = p?.playerId;
+      if (!pid) return;
+      const tx = (typeof p.x === 'number') ? p.x : (layout.center || (worldUsed / 2));
+      const ty = (typeof p.y === 'number') ? p.y : (GROUND_Y - 40);
+      nextTargets[pid] = { x: tx, y: ty };
+    });
+    targetsRef.current = nextTargets;
+
+    // Initialize new players immediately at their first known target.
+    setSmoothedPos((prev) => {
+      const next = { ...(prev || {}) };
+      Object.entries(nextTargets).forEach(([pid, t]) => {
+        if (!next[pid]) next[pid] = { x: t.x, y: t.y };
+      });
+      // Remove players that no longer exist.
+      Object.keys(next).forEach((pid) => {
+        if (!nextTargets[pid]) delete next[pid];
+      });
+      return next;
+    });
+  }, [effectivePlayers, layout.center, worldUsed, GROUND_Y]);
+
+  useEffect(() => {
+    const timeConstantMs = 110; // smaller = snappier, larger = smoother
+    const step = (t) => {
+      if (!lastTsRef.current) lastTsRef.current = t;
+      const dt = Math.min(50, Math.max(0, t - lastTsRef.current));
+      lastTsRef.current = t;
+      const alpha = 1 - Math.exp(-dt / timeConstantMs);
+
+      const targets = targetsRef.current || {};
+      setSmoothedPos((prev) => {
+        const cur = prev || {};
+        const next = { ...cur };
+        Object.entries(targets).forEach(([pid, target]) => {
+          const c = next[pid] || target;
+          next[pid] = {
+            x: c.x + (target.x - c.x) * alpha,
+            y: c.y + (target.y - c.y) * alpha,
+          };
+        });
+        // Keep only current targets.
+        Object.keys(next).forEach((pid) => {
+          if (!targets[pid]) delete next[pid];
+        });
+        return next;
+      });
+
+      rafRef.current = requestAnimationFrame(step);
+    };
+
+    rafRef.current = requestAnimationFrame(step);
+    return () => {
+      if (rafRef.current) cancelAnimationFrame(rafRef.current);
+      rafRef.current = null;
+      lastTsRef.current = 0;
+    };
+  }, []);
   const selectedPlayer = useMemo(() => {
     if (!effectivePlayers) return null;
     if (selectedPlayerId && effectivePlayers[selectedPlayerId]) return effectivePlayers[selectedPlayerId];
@@ -129,12 +198,14 @@ export default function SpectatorSideScroller({ roomId, players = {}, questions 
             {Object.values(effectivePlayers).map(p => {
               const isSelected = selectedPlayerId && p.playerId === selectedPlayerId;
               // Use exact physics Y from student client so standing under blocks/platforms matches perfectly
-              const ry = p.y;
+              const sp = p?.playerId ? smoothedPos[p.playerId] : null;
+              const rx = (sp && typeof sp.x === 'number') ? sp.x : ((typeof p.x === 'number') ? p.x : (layout.center || (worldUsed / 2)));
+              const ry = (sp && typeof sp.y === 'number') ? sp.y : ((typeof p.y === 'number') ? p.y : (GROUND_Y - 40));
               return (
                 <g key={p.playerId || p.name}>
-                  {isSelected && <circle cx={p.x} cy={ry} r="28" fill="#2563eb" opacity="0.25" />}
-                  <circle cx={p.x} cy={ry} r="18" fill={isSelected ? '#2563eb' : '#ef4444'} />
-                  <text x={p.x} y={ry - 28} textAnchor="middle" fontSize="12" fontWeight="bold" fill="#111827">{p.name}</text>
+                  {isSelected && <circle cx={rx} cy={ry} r="28" fill="#2563eb" opacity="0.25" />}
+                  <circle cx={rx} cy={ry} r="18" fill={isSelected ? '#2563eb' : '#ef4444'} />
+                  <text x={rx} y={ry - 28} textAnchor="middle" fontSize="12" fontWeight="bold" fill="#111827">{p.name}</text>
                 </g>
               );
             })}

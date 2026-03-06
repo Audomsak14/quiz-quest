@@ -10,6 +10,9 @@ const safe = (fn, fallback = null) => {
   }
 };
 
+const getAuthUsername = () =>
+  safe(() => sessionStorage.getItem('username') || localStorage.getItem('username') || '', '');
+
 export const profileStorage = {
   // Stable playerId (use for identity across rooms and history)
   getId() {
@@ -48,15 +51,27 @@ export const profileStorage = {
   },
   // Name
   getName() {
-    return safe(() => sessionStorage.getItem('playerName') || '', '');
+    return safe(() => {
+      // If logged in, use the auth username as the single source of truth.
+      const auth = getAuthUsername();
+      if (auth) return auth;
+
+      return sessionStorage.getItem('playerName') || '';
+    }, '');
   },
   setName(name) {
     safe(() => {
-      if (name == null) {
-        sessionStorage.removeItem('playerName');
-      } else {
-        sessionStorage.setItem('playerName', String(name));
+      const auth = getAuthUsername();
+
+      // When logged in, force playerName to match the login username.
+      if (auth) {
+        sessionStorage.setItem('playerName', String(auth));
+        localStorage.removeItem('playerName');
+        return;
       }
+
+      if (name == null) sessionStorage.removeItem('playerName');
+      else sessionStorage.setItem('playerName', String(name));
       // Purge old value to avoid confusion
       localStorage.removeItem('playerName');
     });

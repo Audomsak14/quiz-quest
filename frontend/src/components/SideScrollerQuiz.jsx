@@ -39,9 +39,81 @@ export default function SideScrollerQuiz() {
   }, []);
 
   const [roomId] = useState(() => searchParams.get("roomId") || "");
-  const [playerName] = useState(() => searchParams.get("playerName") || `Player_${Math.floor(Math.random()*1000)}`);
+  const [playerName] = useState(() => {
+    const authUsername = (() => {
+      if (typeof window === 'undefined') return '';
+      try { return sessionStorage.getItem('username') || localStorage.getItem('username') || ''; } catch { return ''; }
+    })();
+    if (authUsername) {
+      try { profileStorage.setName(authUsername); } catch {}
+      return authUsername;
+    }
+
+    const fromUrl = searchParams.get('playerName');
+    if (fromUrl) {
+      try { profileStorage.setName(fromUrl); } catch {}
+      return fromUrl;
+    }
+
+    const stored = (() => {
+      try { return profileStorage.getName(); } catch { return ''; }
+    })();
+    if (stored) return stored;
+
+    const generated = `Player_${Math.floor(Math.random() * 1000)}`;
+    try { profileStorage.setName(generated); } catch {}
+    return generated;
+  });
   const [providedPlayerId] = useState(() => searchParams.get("playerId") || profileStorage.ensureId(playerName) || null);
   const role = "student";
+  const [roomPlayerId, setRoomPlayerId] = useState(() => {
+    if (typeof window === 'undefined') return null;
+    try { return window.sessionStorage.getItem(`qq:roomPlayerId:${roomId}:${playerName}`) || null; } catch { return null; }
+  });
+
+  // Ensure the student appears in the teacher view even when Socket.IO isn't running.
+  useEffect(() => {
+    if (!roomId || !playerName) return;
+    let cancelled = false;
+    const join = async () => {
+      try {
+        const res = await fetch(`http://localhost:5000/api/rooms/${roomId}/join`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name: playerName }),
+        });
+        if (cancelled) return;
+        const data = await res.json().catch(() => null);
+        if (cancelled) return;
+
+        // On success: store the DB roomPlayer id.
+        if (res.ok && data?.success && data?.player?.id) {
+          const pid = String(data.player.id);
+          setRoomPlayerId(pid);
+          try { window.sessionStorage.setItem(`qq:roomPlayerId:${roomId}:${playerName}`, pid); } catch {}
+          return;
+        }
+
+        // On duplicate-name (409): resolve playerId by reading the current room roster.
+        if (res.status === 409) {
+          try {
+            const rr = await fetch(`http://localhost:5000/api/game/room/${roomId}`);
+            const rd = await rr.json().catch(() => null);
+            const list = Array.isArray(rd?.room?.players) ? rd.room.players : [];
+            const target = list.find((p) => (String(p?.name || '').trim().toLowerCase() === String(playerName).trim().toLowerCase()));
+            if (target?.playerId) {
+              const pid = String(target.playerId);
+              setRoomPlayerId(pid);
+              try { window.sessionStorage.setItem(`qq:roomPlayerId:${roomId}:${playerName}`, pid); } catch {}
+            }
+          } catch {}
+          return;
+        }
+      } catch {}
+    };
+    join();
+    return () => { cancelled = true; };
+  }, [roomId, playerName]);
 
   // Canvas/world
   const VIEW_W = 1400; // enlarged from 1200 for a wider play area
@@ -87,6 +159,56 @@ export default function SideScrollerQuiz() {
   const [currentQuestion, setCurrentQuestion] = useState(null);
   const [showQuestion, setShowQuestion] = useState(false);
   const [playerProgress, setPlayerProgress] = useState({ answered: [], score: 0 });
+
+  // Per-question timer (seconds) from question set
+  const [timePerQuestion, setTimePerQuestion] = useState(30);
+  const [timeLeft, setTimeLeft] = useState(null);
+  const [timeUp, setTimeUp] = useState(false);
+  const timeUpHandledRef = useRef(false);
+  const timeUpTimeoutRef = useRef(null);
+
+  // REST fallback for spectator mode: periodically publish our live position.
+  useEffect(() => {
+    if (!roomId || !playerName) return;
+    if (!roomPlayerId) return;
+
+    let cancelled = false;
+    let lastSentAt = 0;
+
+    const tick = async () => {
+      const now = Date.now();
+      if (now - lastSentAt < 90) return;
+      lastSentAt = now;
+      try {
+        const pos = posRef.current;
+        const payload = {
+          roomId,
+          playerId: roomPlayerId,
+          playerName,
+          x: pos?.x ?? 0,
+          y: pos?.y ?? 0,
+          score: playerProgress?.score ?? 0,
+          answered: playerProgress?.answered?.length ?? 0,
+          mode: 'side',
+          ts: now,
+        };
+        await fetch('http://localhost:5000/api/game/state', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+      } catch {}
+    };
+
+    const timer = setInterval(() => {
+      if (!cancelled) tick();
+    }, 120);
+    tick();
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
+  }, [roomId, playerName, roomPlayerId, playerProgress?.score, playerProgress?.answered?.length]);
   // Track per-question answer status: { [questionId]: 'correct' | 'wrong' }
   const [answeredStatus, setAnsweredStatus] = useState({});
   const [answeredByPlayer, setAnsweredByPlayer] = useState({});
@@ -148,6 +270,10 @@ export default function SideScrollerQuiz() {
       try {
         const r = await fetch(`http://localhost:5000/api/game/questions/${roomId}`);
         const data = await r.json();
+
+        const tl = Number(data?.timeLimit);
+        if (Number.isFinite(tl) && tl > 0) setTimePerQuestion(Math.max(1, Math.floor(tl)));
+
         const qArr = Array.isArray(data?.questions) ? data.questions : (Array.isArray(data) ? data : []);
         const count = qArr.length || 4;
         const GAP = 320; const LEFT_PAD = 800; const RIGHT_PAD = 800;
@@ -209,6 +335,49 @@ export default function SideScrollerQuiz() {
     };
     load();
   }, [roomId]);
+
+  // Question countdown timer: starts when the question modal opens.
+  useEffect(() => {
+    if (!showQuestion || !currentQuestion) {
+      setTimeLeft(null);
+      setTimeUp(false);
+      timeUpHandledRef.current = false;
+      if (timeUpTimeoutRef.current) {
+        clearTimeout(timeUpTimeoutRef.current);
+        timeUpTimeoutRef.current = null;
+      }
+      return;
+    }
+
+    const durationSec = Math.max(1, Math.floor(Number(timePerQuestion) || 30));
+    const deadline = Date.now() + durationSec * 1000;
+    setTimeUp(false);
+    timeUpHandledRef.current = false;
+    setTimeLeft(durationSec);
+
+    const iv = setInterval(() => {
+      const remainMs = deadline - Date.now();
+      const secs = Math.max(0, Math.ceil(remainMs / 1000));
+      setTimeLeft(secs);
+
+      if (secs <= 0 && !timeUpHandledRef.current) {
+        timeUpHandledRef.current = true;
+        setTimeUp(true);
+        // Small delay so user sees the red state.
+        timeUpTimeoutRef.current = setTimeout(() => {
+          try { answerQuestion(-1, { timedOut: true }); } catch {}
+        }, 900);
+      }
+    }, 200);
+
+    return () => {
+      clearInterval(iv);
+      if (timeUpTimeoutRef.current) {
+        clearTimeout(timeUpTimeoutRef.current);
+        timeUpTimeoutRef.current = null;
+      }
+    };
+  }, [showQuestion, currentQuestion, timePerQuestion]);
 
   // Rebuild visual blocks
   useEffect(() => {
@@ -361,12 +530,28 @@ export default function SideScrollerQuiz() {
   useEffect(() => {
     let timer;
     let cancelled = false;
+    const confirmedInRosterRef = { current: false };
     const check = async () => {
       try {
         if (!roomId) return;
         const r = await fetch(`http://localhost:5000/api/game/room/${roomId}`);
         const data = await r.json();
         const status = data?.room?.status || data?.status;
+        // If we are no longer present in the room roster, treat as kicked.
+        const roster = Array.isArray(data?.room?.players) ? data.room.players : [];
+        const stillHere = roomPlayerId ? roster.some((p) => String(p?.playerId) === String(roomPlayerId)) : true;
+
+        // Only treat as kicked after we've seen ourselves in roster at least once.
+        if (roomPlayerId && stillHere) {
+          confirmedInRosterRef.current = true;
+        }
+
+        if (!cancelled && roomPlayerId && confirmedInRosterRef.current && !stillHere) {
+          try { window.sessionStorage.setItem(`qq:kicked:${roomId}`, '1'); } catch {}
+          try { window.location.replace('/StudentDashboard/gameroom'); } catch { window.location.href = '/StudentDashboard/gameroom'; }
+          return;
+        }
+
         if (!cancelled && status && status !== 'active') {
           try { window.sessionStorage.setItem(`qq:kicked:${roomId}`, '1'); } catch {}
           try { window.location.replace('/StudentDashboard/gameroom'); } catch { window.location.href = '/StudentDashboard/gameroom'; }
@@ -376,7 +561,7 @@ export default function SideScrollerQuiz() {
     timer = setInterval(check, 1500);
     check();
     return () => { cancelled = true; clearInterval(timer); };
-  }, [roomId]);
+  }, [roomId, roomPlayerId]);
 
   // Input handlers
   useEffect(() => {
@@ -1109,22 +1294,74 @@ export default function SideScrollerQuiz() {
   }, [VIEW_W, VIEW_H, worldW, GROUND_Y, GROUND_H, platforms, isConnected, questionSpots, playerProgress.answered, showQuestion, gameStarted, playerName]);
 
   // Answer selection
-  const answerQuestion = useCallback((idx) => {
+  const submitCompletion = useCallback(async ({ finalScore, elapsedMs, answeredCount }) => {
+    const playerId = socketManager.getPlayerId() || providedPlayerId || null;
+    const fallback = {
+      roomId,
+      rankings: [
+        {
+          rank: 1,
+          playerId,
+          playerName,
+          finalScore,
+          completionTime: elapsedMs,
+          timestamp: Date.now(),
+        },
+      ],
+    };
+
+    try {
+      const res = await fetch('http://localhost:5000/api/game/complete', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          roomId,
+          playerId,
+          playerName,
+          finalScore,
+          completionTime: elapsedMs,
+          questionsAnswered: answeredCount,
+        }),
+      });
+
+      const data = await res.json().catch(() => null);
+      if (res.ok && data?.success && data?.rankings) {
+        setGameResults(data);
+        setShowRankings(true);
+        return;
+      }
+    } catch {}
+
+    // Fallback (single-player result) when backend isn't available
+    setGameResults(fallback);
+    setShowRankings(true);
+  }, [roomId, playerName, providedPlayerId]);
+
+  const answerQuestion = useCallback((idx, opts = {}) => {
     if (!currentQuestion) return;
+    if (timeUp && !opts?.timedOut) return;
     const qid = currentQuestion.id;
     // guard: if already answered, ignore
     if (answeredStatus[qid]) { setShowQuestion(false); setCurrentQuestion(null); return; }
-    const correct = idx === currentQuestion.answerIndex; const earned = correct ? (currentQuestion.points ?? 100) : 0;
+    const timedOut = Boolean(opts?.timedOut) || !Number.isFinite(idx) || idx < 0;
+    const correct = (!timedOut) && (idx === currentQuestion.answerIndex);
+    const earned = correct ? (currentQuestion.points ?? 100) : 0;
     setAnsweredStatus(prev => ({ ...prev, [qid]: correct ? 'correct' : 'wrong' }));
     setPlayerProgress(prev => ({ answered: [...prev.answered, qid], score: prev.score + earned }));
     setShowQuestion(false); setCurrentQuestion(null);
     const total = questionSpots.length; const answeredCount = playerProgress.answered.length + 1;
     if (answeredCount >= total && !completedOnceRef.current) {
       completedOnceRef.current = true;
-      const elapsed = gameStartTime ? Date.now() - gameStartTime : undefined;
-      socketManager.completeGame((playerProgress.score + earned), elapsed, answeredCount);
+      const elapsedMs = gameStartTime ? Math.max(0, Date.now() - gameStartTime) : 0;
+      const finalScore = (playerProgress.score + earned);
+
+      // Try socket path (if there is a socket.io server). If not, fall back to REST.
+      const sent = socketManager.completeGame(finalScore, elapsedMs, answeredCount);
+      if (!sent) {
+        void submitCompletion({ finalScore, elapsedMs, answeredCount });
+      }
     }
-  }, [currentQuestion, answeredStatus, playerProgress, questionSpots.length, gameStartTime]);
+  }, [currentQuestion, answeredStatus, playerProgress, questionSpots.length, gameStartTime, submitCompletion, timeUp]);
 
   // HUD + Canvas + Modals
   return (
@@ -1197,10 +1434,31 @@ export default function SideScrollerQuiz() {
       {showQuestion && currentQuestion && (
         <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50">
           <div className="bg-white rounded-2xl shadow-2xl p-6 max-w-2xl w-[90%] border border-gray-200">
-            <div className="text-xl font-extrabold text-gray-900 mb-4 leading-snug">{currentQuestion.text}</div>
+            <div className="flex items-start justify-between gap-3 mb-3">
+              <div className="text-xl font-extrabold text-gray-900 leading-snug">{currentQuestion.text}</div>
+              <div className={`shrink-0 px-3 py-1 rounded-xl text-sm font-extrabold border ${timeUp ? 'bg-rose-100 text-rose-700 border-rose-200' : 'bg-indigo-50 text-indigo-700 border-indigo-200'}`}>
+                ⏱️ {typeof timeLeft === 'number' ? timeLeft : Math.max(1, Math.floor(Number(timePerQuestion) || 30))}s
+              </div>
+            </div>
+
+            {timeUp && (
+              <div className="mb-3 text-sm font-bold text-rose-700 bg-rose-50 border border-rose-200 rounded-xl px-3 py-2">
+                หมดเวลา! ข้อนี้นับว่าตอบผิด
+              </div>
+            )}
+
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               {currentQuestion.choices.map((c, i) => (
-                <button key={i} onClick={() => answerQuestion(i)} className="p-4 rounded-2xl border-2 border-gray-200 bg-white text-gray-900 text-left font-semibold shadow-sm hover:bg-indigo-50 hover:border-indigo-200 focus:outline-none focus:ring-2 focus:ring-indigo-300">
+                <button
+                  key={i}
+                  onClick={() => answerQuestion(i)}
+                  disabled={timeUp}
+                  className={`p-4 rounded-2xl border-2 text-left font-semibold shadow-sm focus:outline-none focus:ring-2 ${
+                    timeUp
+                      ? 'border-rose-300 bg-rose-50 text-rose-900 focus:ring-rose-200 cursor-not-allowed'
+                      : 'border-gray-200 bg-white text-gray-900 hover:bg-indigo-50 hover:border-indigo-200 focus:ring-indigo-300'
+                  }`}
+                >
                   <span className="inline-block w-6 h-6 mr-2 rounded-md bg-indigo-600 text-white text-center font-bold align-middle">{String.fromCharCode(65+i)}</span>
                   <span className="align-middle">{c}</span>
                 </button>
@@ -1230,7 +1488,7 @@ export default function SideScrollerQuiz() {
                       <div className="w-8 h-8 rounded-full bg-yellow-400 text-white font-bold flex items-center justify-center">{r.rank <= 3 ? ['1','2','3'][r.rank-1] : r.rank}</div>
                       <div>
                         <div className="font-bold text-gray-800">{r.playerName}</div>
-                        <div className="text-xs text-gray-600">เวลา: {secs} วินาที</div>
+                        <div className="text-xs text-gray-600">ใช้เวลา: {secs} วินาที</div>
                       </div>
                     </div>
                     <div className="text-lg font-extrabold text-emerald-700">{r.finalScore} คะแนน</div>
@@ -1239,7 +1497,19 @@ export default function SideScrollerQuiz() {
               })}
             </div>
             <div className="mt-5 flex items-center justify-end gap-2">
-              <button onClick={() => router.push('/StudentDashboard/gameroom')} className="px-4 py-2 rounded-xl bg-indigo-600 text-white hover:bg-indigo-700 shadow focus:outline-none focus:ring-2 focus:ring-indigo-300">กลับหน้าห้อง</button>
+              <button
+                onClick={async () => {
+                  try {
+                    if (roomId && roomPlayerId) {
+                      await fetch(`http://localhost:5000/api/rooms/${roomId}/leave/${roomPlayerId}`, { method: 'POST' });
+                    }
+                  } catch {}
+                  try { window.sessionStorage.removeItem(`qq:roomPlayerId:${roomId}:${playerName}`); } catch {}
+                  try { setRoomPlayerId(null); } catch {}
+                  router.push('/StudentDashboard/gameroom');
+                }}
+                className="px-4 py-2 rounded-xl bg-indigo-600 text-white hover:bg-indigo-700 shadow focus:outline-none focus:ring-2 focus:ring-indigo-300"
+              >กลับหน้าห้อง</button>
             </div>
           </div>
         </div>

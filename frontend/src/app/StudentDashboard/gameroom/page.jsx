@@ -8,6 +8,11 @@ import { profileStorage } from '@/lib/profileStorage';
 
 export default function GameRoom() {
   const router = useRouter();
+  const authUsername = (() => {
+    if (typeof window === 'undefined') return '';
+    try { return sessionStorage.getItem('username') || localStorage.getItem('username') || ''; } catch { return ''; }
+  })();
+  const isLoggedIn = Boolean(authUsername);
   const [showJoinRoom, setShowJoinRoom] = useState(false);
   const [showEditProfile, setShowEditProfile] = useState(false);
   const [roomCode, setRoomCode] = useState('');
@@ -59,9 +64,10 @@ export default function GameRoom() {
   };
 
   const handleSaveProfile = () => {
-    if (tempPlayerName.trim()) {
-      setPlayerName(tempPlayerName);
-      profileStorage.setName(tempPlayerName);
+    const nextName = (isLoggedIn ? authUsername : tempPlayerName).trim();
+    if (nextName) {
+      setPlayerName(nextName);
+      profileStorage.setName(nextName);
     }
     if (tempPlayerAvatar) {
       setPlayerAvatar(tempPlayerAvatar);
@@ -74,7 +80,7 @@ export default function GameRoom() {
   };
 
   const openEditProfile = () => {
-    setTempPlayerName(playerName);
+    setTempPlayerName(isLoggedIn ? authUsername : playerName);
     setTempPlayerAvatar(playerAvatar);
     setShowEditProfile(true);
   };
@@ -93,7 +99,7 @@ export default function GameRoom() {
         await Swal.fire({ icon: 'warning', title: 'ห้องกำลังเล่นอยู่', text: 'ไม่สามารถเข้าร่วมได้' });
         return;
       }
-      const name = (playerName || '').trim() || 'ผู้เล่น';
+      const name = (authUsername || playerName || '').trim() || 'ผู้เล่น';
       // join ผู้เล่นเข้า room
       await axios.post(`http://localhost:5000/api/rooms/${room._id}/join`, { name });
       // เคลียร์ modal และไปหน้า lobby รอเริ่มเกม
@@ -249,7 +255,7 @@ export default function GameRoom() {
                     className="group relative bg-white/5 backdrop-blur-md rounded-2xl p-6 border border-white/10 hover:bg-white/10 transition-all duration-300 transform hover:scale-[1.02] shadow-xl hover:shadow-2xl cursor-pointer"
                     onClick={() => {
                       if (room.status === 'waiting' && room.players < room.maxPlayers) {
-                        const name = (playerName || '').trim() || 'ผู้เล่น';
+                        const name = (authUsername || playerName || '').trim() || 'ผู้เล่น';
                         // โหมดตัวอย่าง: เพิ่ม demo=1 เพื่อให้ Lobby ทำงานแบบออฟไลน์ (ไม่เรียกเซิร์ฟเวอร์)
                         router.push(`/lobby?roomId=${room.code}&playerName=${encodeURIComponent(name)}&demo=1`);
                       }
@@ -396,8 +402,9 @@ export default function GameRoom() {
                 <input
                   type="text"
                   placeholder="กรอกชื่อผู้เล่น"
-                  value={tempPlayerName}
+                  value={isLoggedIn ? authUsername : tempPlayerName}
                   onChange={(e) => setTempPlayerName(e.target.value)}
+                  disabled={isLoggedIn}
                   className="w-full p-4 bg-white/10 backdrop-blur-md border border-white/20 rounded-2xl text-white placeholder-purple-300 focus:ring-2 focus:ring-purple-500 focus:border-transparent transition-all duration-300"
                 />
               </div>

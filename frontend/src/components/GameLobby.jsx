@@ -10,7 +10,11 @@ export default function GameLobby() {
   
   const roomId = searchParams.get('roomId');
   const isDemo = searchParams.get('demo') === '1';
-  const playerName = searchParams.get('playerName') || profileStorage.getName() || 'Player';
+  const authUsername = (() => {
+    if (typeof window === 'undefined') return '';
+    try { return sessionStorage.getItem('username') || localStorage.getItem('username') || ''; } catch { return ''; }
+  })();
+  const playerName = authUsername || searchParams.get('playerName') || profileStorage.getName() || 'Player';
   const providedPlayerId = searchParams.get('playerId') || profileStorage.ensureId(playerName) || null;
   
   const [isConnected, setIsConnected] = useState(false);

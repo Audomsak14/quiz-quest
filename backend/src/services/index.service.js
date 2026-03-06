@@ -30,6 +30,66 @@ async function generateUniqueRoomCode() {
 	throw appError('Unable to generate room code', 500);
 }
 
+// Live game state (in-memory) for spectator mode fallback.
+// This is intentionally non-persistent; restarting the backend clears it.
+const liveStateByRoom = new Map();
+
+// Completion metadata (in-memory) keyed by room and player.
+// Used to return completion durations even though attempts only persist score + timestamp.
+const completionMetaByRoom = new Map();
+
+// Track kicked players (in-memory) so we can reject further live-state updates
+// without hitting the database on every /api/game/state POST.
+const kickedPlayersByRoom = new Map();
+
+function getKickedRoomSet(roomId) {
+	const key = Number(roomId);
+	if (!kickedPlayersByRoom.has(key)) {
+		kickedPlayersByRoom.set(key, new Set());
+	}
+	return kickedPlayersByRoom.get(key);
+}
+
+function getLiveRoomMap(roomId) {
+	const key = Number(roomId);
+	if (!liveStateByRoom.has(key)) {
+		liveStateByRoom.set(key, new Map());
+	}
+	return liveStateByRoom.get(key);
+}
+
+function getCompletionMetaMap(roomId) {
+	const key = Number(roomId);
+	if (!completionMetaByRoom.has(key)) {
+		completionMetaByRoom.set(key, new Map());
+	}
+	return completionMetaByRoom.get(key);
+}
+
+function pruneStaleStates(roomMap, { now = Date.now(), maxAgeMs = 30_000 } = {}) {
+	for (const [playerId, state] of roomMap.entries()) {
+		if (!state || typeof state.updatedAt !== 'number' || now - state.updatedAt > maxAgeMs) {
+			roomMap.delete(playerId);
+		}
+	}
+}
+
+function removeLiveState(roomId, playerId) {
+	const rid = Number(roomId);
+	if (!Number.isFinite(rid) || rid <= 0) return;
+	const key = String(playerId);
+	const roomMap = liveStateByRoom.get(rid);
+	if (!roomMap) return;
+	roomMap.delete(key);
+}
+
+function markKicked(roomId, playerIds) {
+	const set = getKickedRoomSet(roomId);
+	for (const pid of playerIds) {
+		set.add(String(pid));
+	}
+}
+
 function mapRoom(room) {
 	return {
 		_id: toMongoLikeId(room.id),
@@ -65,6 +125,28 @@ function mapQuestionSet(questionSet) {
 		createdAt: questionSet.createdAt,
 		updatedAt: questionSet.updatedAt,
 	};
+}
+
+function calcMaxScoreFromQuestionSet(questionSet) {
+	const questions = Array.isArray(questionSet?.questions) ? questionSet.questions : [];
+	if (!questions.length) return 0;
+	let sum = 0;
+	for (const q of questions) {
+		const pts = Number(q?.points);
+		sum += (Number.isFinite(pts) && pts > 0) ? pts : 0;
+	}
+	return sum;
+}
+
+function calcPercentScore(score, maxScore) {
+	const raw = Number(score) || 0;
+	const max = Number(maxScore) || 0;
+	if (!Number.isFinite(max) || max <= 0) {
+		// Fallback: clamp raw to 0..100 so UI never exceeds 100%
+		return Math.min(100, Math.max(0, raw));
+	}
+	const pct = (raw / max) * 100;
+	return Math.min(100, Math.max(0, pct));
 }
 
 const authService = {
@@ -311,7 +393,7 @@ const roomService = {
 			throw appError('Room not found', 404);
 		}
 
-		if (room.status !== 'waiting') {
+		if (room.status === 'ended') {
 			throw appError('Room is not open for joining', 409);
 		}
 
@@ -342,6 +424,36 @@ const roomService = {
 		};
 	},
 
+	async leaveRoom(roomId, playerId) {
+		const room = await prisma.room.findUnique({ where: { id: roomId } });
+		if (!room) {
+			throw appError('Room not found', 404);
+		}
+
+		const pid = Number(playerId);
+		if (!Number.isFinite(pid) || pid <= 0) throw appError('Invalid playerId', 400);
+
+		const now = new Date();
+
+		// We treat "leave" as "inactive" in the roster (same mechanism as kick: kickedAt != null).
+		const updated = await prisma.roomPlayer.updateMany({
+			where: { roomId, id: pid, kickedAt: null },
+			data: { kickedAt: now },
+		});
+
+		if (updated.count > 0) {
+			// Clear any live state and reject further updates from this player id.
+			markKicked(roomId, [String(pid)]);
+			removeLiveState(roomId, String(pid));
+		}
+
+		return {
+			left: updated.count,
+			roomId: toMongoLikeId(roomId),
+			playerId: toMongoLikeId(pid),
+		};
+	},
+
 	async kickAll(roomId) {
 		const room = await prisma.room.findUnique({ where: { id: roomId } });
 		if (!room) {
@@ -354,6 +466,12 @@ const roomService = {
 			where: { roomId, kickedAt: null },
 			select: { id: true },
 		});
+
+		// Mark kicked + clear any live state for these ids (REST spectator mode)
+		markKicked(roomId, activePlayers.map((p) => String(p.id)));
+		for (const p of activePlayers) {
+			removeLiveState(roomId, String(p.id));
+		}
 
 		await prisma.$transaction([
 			prisma.room.update({
@@ -371,9 +489,71 @@ const roomService = {
 			roomId: toMongoLikeId(roomId),
 		};
 	},
+
+	async kickPlayer(roomId, playerId) {
+		const room = await prisma.room.findUnique({ where: { id: roomId } });
+		if (!room) {
+			throw appError('Room not found', 404);
+		}
+
+		const now = new Date();
+		const pid = Number(playerId);
+		if (!Number.isFinite(pid) || pid <= 0) throw appError('Invalid playerId', 400);
+
+		const updated = await prisma.roomPlayer.updateMany({
+			where: { roomId, id: pid, kickedAt: null },
+			data: { kickedAt: now },
+		});
+
+		if (updated.count > 0) {
+			markKicked(roomId, [String(pid)]);
+			removeLiveState(roomId, String(pid));
+		}
+
+		return {
+			kicked: updated.count,
+			roomId: toMongoLikeId(roomId),
+			playerId: toMongoLikeId(pid),
+		};
+	},
 };
 
 const gameService = {
+	async getResults(roomId) {
+		const rid = Number(roomId);
+		if (!Number.isFinite(rid) || rid <= 0) throw appError('Invalid roomId', 400);
+
+		const room = await prisma.room.findUnique({ where: { id: rid } });
+		if (!room) throw appError('Room not found', 404);
+
+		const attempts = await prisma.gameAttempt.findMany({
+			where: { roomId: rid },
+			orderBy: [{ score: 'desc' }, { timestamp: 'asc' }],
+		});
+
+		let meta = null;
+		try { meta = getCompletionMetaMap(rid); } catch {}
+		const resolveCompletionTime = (attempt) => {
+			if (!meta) return null;
+			const pid = attempt.playerId ? String(attempt.playerId) : '';
+			const pname = String(attempt.playerName || '');
+			if (pid && meta.has(`id:${pid}`)) return meta.get(`id:${pid}`)?.completionTime ?? null;
+			if (pname && meta.has(`name:${pname}`)) return meta.get(`name:${pname}`)?.completionTime ?? null;
+			return null;
+		};
+
+		return {
+			roomId: toMongoLikeId(rid),
+			rankings: attempts.map((attempt, index) => ({
+				rank: attempt.rank ?? (index + 1),
+				playerId: attempt.playerId,
+				playerName: attempt.playerName,
+				finalScore: attempt.score,
+				completionTime: resolveCompletionTime(attempt),
+				timestamp: attempt.timestamp,
+			})),
+		};
+	},
 	async getRoom(roomId) {
 		const room = await prisma.room.findUnique({
 			where: { id: roomId },
@@ -436,6 +616,7 @@ const gameService = {
 			roomId: toMongoLikeId(room.id),
 			questionSetId: room.questionSet ? toMongoLikeId(room.questionSet.id) : null,
 			questionSetTitle: room.questionSet?.title || null,
+			timeLimit: Number.isFinite(Number(room.questionSet?.timeLimit)) ? Number(room.questionSet.timeLimit) : 30,
 			questions,
 		};
 	},
@@ -454,26 +635,52 @@ const gameService = {
 			where,
 			orderBy: { timestamp: 'desc' },
 			take: limit,
+			include: {
+				room: {
+					select: {
+						name: true,
+						questionSet: {
+							select: {
+								title: true,
+								questions: { select: { points: true } },
+							},
+						},
+					},
+				},
+			},
 		});
 
+		const percentScores = attempts.map((item) => {
+			const maxScore = calcMaxScoreFromQuestionSet(item?.room?.questionSet);
+			return calcPercentScore(item?.score, maxScore);
+		});
 		const scores = attempts.map((item) => item.score);
 		const total = scores.length;
 		const averageScore = total ? Number((scores.reduce((sum, item) => sum + item, 0) / total).toFixed(2)) : 0;
 		const bestScore = total ? Math.max(...scores) : 0;
+		const averageScorePercent = total
+			? Number((percentScores.reduce((sum, item) => sum + item, 0) / total).toFixed(2))
+			: 0;
+		const bestScorePercent = total ? Number(Math.max(...percentScores).toFixed(2)) : 0;
 
 		return {
 			summary: {
 				totalTests: total,
 				totalAttempts: total,
 				averageScore,
+				averageScorePercent,
 				bestScore,
+				bestScorePercent,
 			},
 			attempts: attempts.map((item) => ({
 				_id: toMongoLikeId(item.id),
 				roomId: toMongoLikeId(item.roomId),
+				roomName: item.room?.name || null,
+				questionSetTitle: item.room?.questionSet?.title || null,
 				playerId: item.playerId,
 				playerName: item.playerName,
 				score: item.score,
+				scorePercent: Number(calcPercentScore(item.score, calcMaxScoreFromQuestionSet(item?.room?.questionSet)).toFixed(2)),
 				rank: item.rank,
 				totalPlayers: item.totalPlayers,
 				timestamp: item.timestamp,
@@ -505,6 +712,163 @@ const gameService = {
 		const deleted = await prisma.gameAttempt.deleteMany({ where });
 		return { deleted: deleted.count };
 	},
+
+	async complete(payload) {
+		const roomId = Number(payload.roomId);
+		const playerId = payload.playerId ? String(payload.playerId) : null;
+		const playerName = String(payload.playerName);
+		const finalScore = Number(payload.finalScore) || 0;
+		const completionTimeMs = payload.completionTime == null ? null : Math.max(0, Number(payload.completionTime) || 0);
+
+		const room = await prisma.room.findUnique({ where: { id: roomId } });
+		if (!room) {
+			throw appError('Room not found', 404);
+		}
+
+		// Track duration in memory so teacher + other students can see it.
+		try {
+			if (completionTimeMs != null) {
+				const meta = getCompletionMetaMap(roomId);
+				const key = playerId ? `id:${playerId}` : `name:${playerName}`;
+				meta.set(key, { completionTime: completionTimeMs });
+			}
+		} catch {}
+
+		await prisma.$transaction(async (tx) => {
+			if (playerId) {
+				await tx.gameAttempt.deleteMany({
+					where: {
+						roomId,
+						playerId,
+					},
+				});
+			}
+
+			await tx.gameAttempt.create({
+				data: {
+					roomId,
+					playerId,
+					playerName,
+					score: finalScore,
+				},
+			});
+
+			const attempts = await tx.gameAttempt.findMany({
+				where: { roomId },
+				orderBy: [{ score: 'desc' }, { timestamp: 'asc' }],
+			});
+
+			const activePlayers = await tx.roomPlayer.count({
+				where: { roomId, kickedAt: null },
+			});
+
+			// Update rank/totalPlayers for visibility in history endpoints.
+			for (let index = 0; index < attempts.length; index += 1) {
+				const attempt = attempts[index];
+				await tx.gameAttempt.update({
+					where: { id: attempt.id },
+					data: { rank: index + 1, totalPlayers: activePlayers || attempts.length },
+				});
+			}
+		});
+
+		const attempts = await prisma.gameAttempt.findMany({
+			where: { roomId },
+			orderBy: [{ score: 'desc' }, { timestamp: 'asc' }],
+		});
+
+		let meta = null;
+		try { meta = getCompletionMetaMap(roomId); } catch {}
+
+		const resolveCompletionTime = (attempt) => {
+			if (!meta) return null;
+			const pid = attempt.playerId ? String(attempt.playerId) : '';
+			const pname = String(attempt.playerName || '');
+			if (pid && meta.has(`id:${pid}`)) return meta.get(`id:${pid}`)?.completionTime ?? null;
+			if (pname && meta.has(`name:${pname}`)) return meta.get(`name:${pname}`)?.completionTime ?? null;
+			return null;
+		};
+
+		return {
+			roomId: toMongoLikeId(roomId),
+			rankings: attempts.map((attempt) => ({
+				rank: attempt.rank,
+				playerId: attempt.playerId,
+				playerName: attempt.playerName,
+				finalScore: attempt.score,
+				completionTime: resolveCompletionTime(attempt),
+				timestamp: attempt.timestamp,
+			})),
+		};
+	},
+
+	async upsertLiveState(payload) {
+		const roomId = Number(payload.roomId);
+		const playerId = String(payload.playerId);
+		const playerName = String(payload.playerName);
+		const x = Number(payload.x);
+		const y = Number(payload.y);
+		const score = payload.score == null ? undefined : Number(payload.score);
+		const answered = payload.answered == null ? undefined : Number(payload.answered);
+		const mode = payload.mode == null ? undefined : String(payload.mode);
+		const now = Date.now();
+
+		if (!Number.isFinite(roomId) || roomId <= 0) throw appError('Invalid roomId', 400);
+		if (!playerId) throw appError('Invalid playerId', 400);
+		if (!playerName) throw appError('Invalid playerName', 400);
+		if (!Number.isFinite(x) || !Number.isFinite(y)) throw appError('Invalid position', 400);
+
+		// If player has been kicked, ignore further live-state updates.
+		// This keeps teacher view clean even if the client hasn't redirected yet.
+		try {
+			const kickedSet = getKickedRoomSet(roomId);
+			if (kickedSet.has(String(playerId))) {
+				return { ignored: true };
+			}
+		} catch {}
+
+		const roomMap = getLiveRoomMap(roomId);
+		pruneStaleStates(roomMap, { now });
+
+		const prev = roomMap.get(playerId);
+		const next = {
+			roomId: toMongoLikeId(roomId),
+			playerId,
+			playerName,
+			x,
+			y,
+			score: Number.isFinite(score) ? score : (prev?.score ?? 0),
+			answered: Number.isFinite(answered) ? answered : (prev?.answered ?? 0),
+			mode: mode || prev?.mode || null,
+			updatedAt: now,
+		};
+
+		roomMap.set(playerId, next);
+		return { state: next };
+	},
+
+	async getLiveState(roomId) {
+		const rid = Number(roomId);
+		if (!Number.isFinite(rid) || rid <= 0) throw appError('Invalid roomId', 400);
+
+		const roomMap = getLiveRoomMap(rid);
+		const now = Date.now();
+		pruneStaleStates(roomMap, { now });
+
+		return {
+			roomId: toMongoLikeId(rid),
+			players: Array.from(roomMap.values()).map((p) => ({
+				playerId: p.playerId,
+				playerName: p.playerName,
+				x: p.x,
+				y: p.y,
+				score: p.score ?? 0,
+				answered: p.answered ?? 0,
+				mode: p.mode ?? null,
+				updatedAt: p.updatedAt,
+			})),
+		};
+	},
 };
 
 const teacherService = {
@@ -512,12 +876,26 @@ const teacherService = {
 		const todayStart = new Date();
 		todayStart.setHours(0, 0, 0, 0);
 
-		const [studentsJoined, attemptsAgg, testsToday] = await Promise.all([
+		const [studentsJoined, attempts, testsToday] = await Promise.all([
 			prisma.roomPlayer.count({
 				where: { kickedAt: null },
 			}),
-			prisma.gameAttempt.aggregate({
-				_avg: { score: true },
+			prisma.gameAttempt.findMany({
+				select: {
+					score: true,
+					room: {
+						select: {
+							questionSet: {
+								select: {
+									questions: { select: { points: true } },
+								},
+							},
+						},
+					},
+				},
+				// Keep it bounded for dashboard; newest first is fine.
+				orderBy: { timestamp: 'desc' },
+				take: 1000,
 			}),
 			prisma.room.count({
 				where: {
@@ -526,9 +904,20 @@ const teacherService = {
 			}),
 		]);
 
+		const percents = (attempts || []).map((a) => {
+			const maxScore = calcMaxScoreFromQuestionSet(a?.room?.questionSet);
+			return calcPercentScore(a?.score, maxScore);
+		});
+		const avgPercentRaw = percents.length
+			? (percents.reduce((sum, p) => sum + (Number(p) || 0), 0) / percents.length)
+			: 0;
+		const avgPercent = Number.isFinite(avgPercentRaw)
+			? Number(Math.min(100, Math.max(0, avgPercentRaw)).toFixed(2))
+			: 0;
+
 		return {
 			studentsJoined,
-			averageScorePercent: Number((attemptsAgg._avg.score || 0).toFixed(2)),
+			averageScorePercent: avgPercent,
 			testsToday,
 		};
 	},

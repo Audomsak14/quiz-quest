@@ -4,6 +4,8 @@ import { useState, useEffect } from "react";
 import Swal from "sweetalert2";
 import axios from "axios";
 import { useRouter } from "next/navigation";
+import { profileStorage } from "@/lib/profileStorage";
+import { getAuthSession } from "@/lib/auth";
 
 export default function Login() {
   const [username, setUser] = useState("");
@@ -16,6 +18,15 @@ export default function Login() {
   useEffect(() => {
     setIsClient(true);
   }, []);
+
+  // Login session: if already logged in, go straight to the right dashboard
+  useEffect(() => {
+    if (!isClient) return;
+    const { token, role } = getAuthSession();
+    if (!token) return;
+    if (role === 'teacher') router.replace('/TeacherDashboard');
+    else router.replace('/StudentDashboard');
+  }, [isClient, router]);
 
   // โหลดข้อมูลที่จำไว้จากการสมัครสมาชิก
   useEffect(() => {
@@ -67,6 +78,9 @@ export default function Login() {
       localStorage.setItem("role", res.data.user.role);
       localStorage.setItem("userId", res.data.user.id);
       localStorage.setItem("username", res.data.user.username);
+
+      // Make in-game playerName the same as the login username
+      try { profileStorage.setName(res.data.user.username); } catch {}
       
       console.log("💾 Stored in localStorage:", {
         role: res.data.user.role,
