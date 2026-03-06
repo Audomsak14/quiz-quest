@@ -169,6 +169,75 @@ export default function TeacherDashboard() {
     }
   };
 
+  const handleShowStudentsJoined = async () => {
+    try {
+      const response = await axios.get('http://localhost:5000/api/teacher/students', withAuth());
+      const students = Array.isArray(response.data?.students) ? response.data.students : [];
+
+      if (students.length === 0) {
+        await Swal.fire({
+          icon: 'info',
+          title: 'ยังไม่มีนักเรียนที่เคยเข้าร่วม',
+          text: 'เมื่อมีนักเรียนเข้าร่วมเล่นเกมกับบัญชีครูนี้ รายการจะปรากฏที่นี่',
+        });
+        return;
+      }
+
+      const rows = students
+        .map((student, index) => {
+          const when = student.lastPlayedAt
+            ? new Date(student.lastPlayedAt).toLocaleString('th-TH')
+            : '-';
+
+          return `
+            <tr>
+              <td style="padding:8px 10px;border-bottom:1px solid #e5e7eb;text-align:center;">${index + 1}</td>
+              <td style="padding:8px 10px;border-bottom:1px solid #e5e7eb;">${student.playerName || '-'}</td>
+              <td style="padding:8px 10px;border-bottom:1px solid #e5e7eb;">${student.playerId || '-'}</td>
+              <td style="padding:8px 10px;border-bottom:1px solid #e5e7eb;text-align:center;">${student.attemptsCount || 0}</td>
+              <td style="padding:8px 10px;border-bottom:1px solid #e5e7eb;text-align:center;">${student.roomsCount || 0}</td>
+              <td style="padding:8px 10px;border-bottom:1px solid #e5e7eb;text-align:center;">${student.bestScore || 0}</td>
+              <td style="padding:8px 10px;border-bottom:1px solid #e5e7eb;">${when}</td>
+            </tr>
+          `;
+        })
+        .join('');
+
+      await Swal.fire({
+        title: 'นักเรียนที่เคยเข้าร่วมกับครูคนนี้',
+        width: 1100,
+        html: `
+          <div style="max-height:58vh;overflow:auto;text-align:left;">
+            <table style="width:100%;border-collapse:collapse;font-size:14px;">
+              <thead>
+                <tr style="background:#f3f4f6;position:sticky;top:0;">
+                  <th style="padding:10px;border-bottom:1px solid #d1d5db;">#</th>
+                  <th style="padding:10px;border-bottom:1px solid #d1d5db;">ชื่อ</th>
+                  <th style="padding:10px;border-bottom:1px solid #d1d5db;">ไอดีผู้เล่น</th>
+                  <th style="padding:10px;border-bottom:1px solid #d1d5db;">จำนวนครั้ง</th>
+                  <th style="padding:10px;border-bottom:1px solid #d1d5db;">จำนวนห้อง</th>
+                  <th style="padding:10px;border-bottom:1px solid #d1d5db;">คะแนนสูงสุด</th>
+                  <th style="padding:10px;border-bottom:1px solid #d1d5db;">เล่นล่าสุด</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${rows}
+              </tbody>
+            </table>
+          </div>
+        `,
+        confirmButtonText: 'ปิด',
+      });
+    } catch (err) {
+      console.error('Error loading joined students list:', err);
+      await Swal.fire({
+        icon: 'error',
+        title: 'โหลดรายการนักเรียนไม่สำเร็จ',
+        text: err.response?.data?.error || err.message,
+      });
+    }
+  };
+
   if (isLoading) {
     return (
       <div className="min-h-screen bg-gradient-to-b from-[#030637] via-[#180161] to-[#FF204E] flex items-center justify-center">
@@ -251,11 +320,15 @@ export default function TeacherDashboard() {
           </div>
         </div>
 
-        <div className="group bg-gradient-to-br from-purple-500/20 to-pink-500/20 backdrop-blur-2xl rounded-2xl p-6 border border-white/10 shadow-xl hover:scale-105 hover:shadow-2xl transition-all duration-300">
+        <button
+          onClick={handleShowStudentsJoined}
+          type="button"
+          className="group bg-gradient-to-br from-purple-500/20 to-pink-500/20 backdrop-blur-2xl rounded-2xl p-6 border border-white/10 shadow-xl hover:scale-105 hover:shadow-2xl transition-all duration-300 text-left"
+        >
           <div className="flex items-center justify-between">
             <div>
               <h3 className="text-4xl font-bold text-white mb-2">{dashboardStats.studentsJoined}</h3>
-              <p className="text-purple-200 font-semibold text-lg">นักเรียนที่เข้าร่วม</p>
+              <p className="text-purple-200 font-semibold text-lg">นักเรียนที่เคยเข้าร่วม (คลิกเพื่อดูรายชื่อ)</p>
               <div className="w-12 h-1 bg-gradient-to-r from-purple-400 to-pink-400 rounded-full mt-2"></div>
             </div>
             <div className="w-16 h-16 bg-gradient-to-br from-purple-500 to-pink-500 rounded-2xl flex items-center justify-center shadow-xl group-hover:rotate-12 transition-transform duration-300">
@@ -264,7 +337,7 @@ export default function TeacherDashboard() {
               </svg>
             </div>
           </div>
-        </div>
+        </button>
 
         <button
           onClick={handleShowTestsToday}

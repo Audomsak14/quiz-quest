@@ -28,8 +28,25 @@ function requireAuth(req, res, next) {
   return next();
 }
 
+function requireRole(...roles) {
+  const normalized = roles.map((role) => String(role || '').trim().toLowerCase()).filter(Boolean);
+  return (req, res, next) => {
+    if (!req.user) {
+      return res.status(401).json({ success: false, error: 'Unauthorized' });
+    }
+
+    const role = String(req.user.role || '').trim().toLowerCase();
+    if (!normalized.includes(role)) {
+      return res.status(403).json({ success: false, error: 'Forbidden' });
+    }
+
+    return next();
+  };
+}
+
 module.exports = {
   JWT_SECRET,
   attachUser,
   requireAuth,
+  requireRole,
 };

@@ -315,20 +315,24 @@ const initializeSocketServer = (httpServer) => {
     socket.on('kickPlayer', (payload = {}) => {
       const roomId = toRoomId(payload.roomId);
       const playerId = String(payload.playerId || '');
-      if (!roomId || !playerId) return;
+      const playerName = String(payload.playerName || '').trim().toLowerCase();
+      if (!roomId || (!playerId && !playerName)) return;
 
       const room = roomStates.get(roomId);
       if (!room) return;
-      const target = room.players.get(playerId);
+      let target = room.players.get(playerId);
+      if (!target && playerName) {
+        target = Array.from(room.players.values()).find((player) => String(player.name || '').trim().toLowerCase() === playerName);
+      }
       if (!target) return;
 
       const targetSocket = io.sockets.sockets.get(target.socketId);
       if (targetSocket) {
-        targetSocket.emit('kicked', { roomId: String(roomId), playerId });
+        targetSocket.emit('kicked', { roomId: String(roomId), playerId: target.playerId });
         targetSocket.disconnect(true);
       }
 
-      removePlayerFromRoom(io, roomId, playerId, 'kicked');
+      removePlayerFromRoom(io, roomId, target.playerId, 'kicked');
     });
 
     socket.on('returnToLobby', async (payload = {}) => {

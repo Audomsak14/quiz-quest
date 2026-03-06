@@ -20,10 +20,10 @@ export default function SpectatorMap({ roomId, players = {}, questions = [], sel
   const selected = selectedPlayerId && effectivePlayers[selectedPlayerId] ? effectivePlayers[selectedPlayerId] : null;
 
   return (
-    <div className="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-      <div className="bg-white rounded-3xl shadow-2xl border border-white/20 overflow-hidden w-full max-w-6xl">
+    <div className="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center p-2 sm:p-4">
+      <div className="bg-white rounded-3xl shadow-2xl border border-white/20 overflow-hidden w-full max-w-6xl max-h-[92vh] flex flex-col">
         {/* Header */}
-        <div className="flex items-center justify-between p-4 bg-gradient-to-r from-indigo-50 to-purple-50 border-b">
+        <div className="shrink-0 flex flex-wrap items-start justify-between gap-3 p-3 sm:p-4 bg-gradient-to-r from-indigo-50 to-purple-50 border-b">
           <div className="flex items-center gap-3">
             <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-indigo-500 to-purple-500 text-white flex items-center justify-center">👀</div>
             <div>
@@ -31,25 +31,25 @@ export default function SpectatorMap({ roomId, players = {}, questions = [], sel
               <div className="text-xs text-gray-600">ดูการเคลื่อนไหวของนักเรียนแบบเรียลไทม์</div>
             </div>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2 justify-end">
             <button
               onClick={onPrev}
               disabled={!ids.length}
               aria-label="ก่อนหน้า"
-              className="px-4 py-2 rounded-xl bg-indigo-600 text-white shadow hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-400 disabled:bg-gray-300 disabled:text-gray-600 disabled:cursor-not-allowed"
+              className="px-3 sm:px-4 py-2 rounded-xl bg-indigo-600 text-white shadow hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-400 disabled:bg-gray-300 disabled:text-gray-600 disabled:cursor-not-allowed text-sm sm:text-base"
             >← ก่อนหน้า</button>
             <button
               onClick={onNext}
               disabled={!ids.length}
               aria-label="ถัดไป"
-              className="px-4 py-2 rounded-xl bg-purple-600 text-white shadow hover:bg-purple-700 focus:outline-none focus:ring-2 focus:ring-purple-400 disabled:bg-gray-300 disabled:text-gray-600 disabled:cursor-not-allowed"
+              className="px-3 sm:px-4 py-2 rounded-xl bg-purple-600 text-white shadow hover:bg-purple-700 focus:outline-none focus:ring-2 focus:ring-purple-400 disabled:bg-gray-300 disabled:text-gray-600 disabled:cursor-not-allowed text-sm sm:text-base"
             >ถัดไป →</button>
-            <button onClick={onClose} className="px-4 py-2 rounded-xl bg-gray-800 hover:bg-gray-900 text-white shadow focus:outline-none focus:ring-2 focus:ring-gray-400">ปิด</button>
+            <button onClick={onClose} className="px-3 sm:px-4 py-2 rounded-xl bg-gray-800 hover:bg-gray-900 text-white shadow focus:outline-none focus:ring-2 focus:ring-gray-400 text-sm sm:text-base">ปิด</button>
           </div>
         </div>
 
         {/* Map */}
-        <div className="relative w-full" style={{ height: 600 }}>
+        <div className="relative w-full flex-1 min-h-0 overflow-auto" style={{ height: 600 }}>
           <svg width="100%" height="100%" viewBox={`0 0 ${MAP_WIDTH} ${MAP_HEIGHT}`} className="absolute inset-0" style={{ width: '100%', height: '100%' }}>
             <defs>
               <pattern id="grassTextureSpectate" x="0" y="0" width="60" height="60" patternUnits="userSpaceOnUse">

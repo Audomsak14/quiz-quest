@@ -27,8 +27,8 @@ const questionSetSchema = z.object({
 	questions: z.array(questionSchema).min(1),
 });
 
-router.get('/sets', questionSetController.list);
-router.get('/sets/:setId', validateParams(setIdParamSchema), questionSetController.getById);
+router.get('/sets', requireAuth, questionSetController.list);
+router.get('/sets/:setId', requireAuth, validateParams(setIdParamSchema), questionSetController.getById);
 router.post('/sets', requireAuth, validateBody(questionSetSchema), questionSetController.create);
 router.put('/sets/:setId', requireAuth, validateParams(setIdParamSchema), validateBody(questionSetSchema), questionSetController.update);
 router.delete('/sets/:setId', requireAuth, validateParams(setIdParamSchema), questionSetController.remove);

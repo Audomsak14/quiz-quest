@@ -2,6 +2,22 @@ const { prisma, appError, toMongoLikeId, generateUniqueRoomCode, mapRoom } = req
 
 const roomService = {
 	async create(payload) {
+		const ownerUsername = String(payload.ownerUsername || '').trim();
+		if (!ownerUsername) {
+			throw appError('Unauthorized', 401);
+		}
+
+		if (payload.questionSetId) {
+			const set = await prisma.questionSet.findUnique({
+				where: { id: Number(payload.questionSetId) },
+				select: { id: true, createdBy: true },
+			});
+
+			if (!set || String(set.createdBy || '').trim() !== ownerUsername) {
+				throw appError('Question set not found', 404);
+			}
+		}
+
 		const roomCode = await generateUniqueRoomCode();
 
 		const room = await prisma.room.create({

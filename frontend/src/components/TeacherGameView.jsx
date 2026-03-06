@@ -457,7 +457,11 @@ export default function TeacherGameView() {
                       {s.isConnected === false ? "⚪ ออฟไลน์" : "🟢 เชื่อมต่ออยู่"}
                     </div>
                     <button
-                      onClick={() => socketManager.socketEmit('kickPlayer', { roomId, playerId: s.playerId })}
+                      onClick={() => socketManager.socketEmit('kickPlayer', {
+                        roomId,
+                        playerId: s.playerId,
+                        playerName: s.name,
+                      })}
                       className="text-sm px-3 py-1 rounded-xl bg-rose-100 text-rose-700 border border-rose-200 hover:bg-rose-200"
                     >เตะ</button>
                   </div>

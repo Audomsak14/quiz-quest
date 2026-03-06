@@ -6,6 +6,7 @@ const roomController = {
 		const room = await roomService.create({
 			...req.body,
 			questionSetId: req.body.questionSetId ? Number(req.body.questionSetId) : null,
+			ownerUsername: req.user?.username || null,
 		});
 		res.status(201).json(room);
 	}),

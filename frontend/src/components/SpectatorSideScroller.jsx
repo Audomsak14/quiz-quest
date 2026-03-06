@@ -13,13 +13,44 @@ export default function SpectatorSideScroller({ roomId, players = {}, questions 
   // ใช้สูตรเดียวกับฝั่งนักเรียนในการวางแท่นและบล็อก (buildSymmetricOffsets + platLevels)
   function buildSymmetricOffsets(count, gap) {
     if (count <= 0) return [];
-    const arr = [0];
-    let step = 1;
+    const arr = [];
+    let step = 0;
     while (arr.length < count) {
-      arr.push(step * gap);
+      const distance = (step + 1) * gap;
+      arr.push(distance);
       if (arr.length >= count) break;
-      arr.push(-step * gap);
+      arr.push(-distance);
       step++;
+    }
+    return arr;
+  }
+
+  function hashSeed(input) {
+    const text = String(input || 'quiz-quest');
+    let hash = 2166136261;
+    for (let i = 0; i < text.length; i++) {
+      hash ^= text.charCodeAt(i);
+      hash = Math.imul(hash, 16777619);
+    }
+    return hash >>> 0;
+  }
+
+  function seededRandomFactory(seedInput) {
+    let t = hashSeed(seedInput) || 1;
+    return () => {
+      t += 0x6D2B79F5;
+      let r = Math.imul(t ^ (t >>> 15), 1 | t);
+      r ^= r + Math.imul(r ^ (r >>> 7), 61 | r);
+      return ((r ^ (r >>> 14)) >>> 0) / 4294967296;
+    };
+  }
+
+  function buildQuestionOffsets(count, gap, seedInput) {
+    const arr = buildSymmetricOffsets(count, gap);
+    const random = seededRandomFactory(seedInput);
+    for (let i = arr.length - 1; i > 0; i--) {
+      const j = Math.floor(random() * (i + 1));
+      [arr[i], arr[j]] = [arr[j], arr[i]];
     }
     return arr;
   }
@@ -32,7 +63,7 @@ export default function SpectatorSideScroller({ roomId, players = {}, questions 
     const needed = count > 1 ? (count - 1) * GAP : 0;
     const world = Math.max(minWorld, LEFT_PAD + RIGHT_PAD + needed + VIEW_W);
     const center = world / 2;
-    const offsets = buildSymmetricOffsets(count, GAP);
+    const offsets = buildQuestionOffsets(count, GAP, `${roomId}:questions`);
 
     const platLevels = [
       { dy: 120, w: 260 },
@@ -54,7 +85,7 @@ export default function SpectatorSideScroller({ roomId, players = {}, questions 
         return { id: q.id || `q${i+1}`, x: center + off, y };
       });
     return { world, center, plats, blocks };
-  }, [questions, VIEW_W, GROUND_Y]);
+  }, [questions, VIEW_W, GROUND_Y, roomId]);
 
   const platforms = layout.plats;
   const blocks = layout.blocks;
@@ -75,10 +106,10 @@ export default function SpectatorSideScroller({ roomId, players = {}, questions 
   }, [effectivePlayers, selectedPlayerId]);
 
   return (
-    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-  <div className="bg-white rounded-3xl shadow-2xl border border-white/20 overflow-hidden w-full max-w-[1300px]">
+    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-2 sm:p-4">
+  <div className="bg-white rounded-3xl shadow-2xl border border-white/20 overflow-hidden w-full max-w-[1300px] max-h-[92vh] flex flex-col">
         {/* Header */}
-        <div className="flex items-center justify-between p-4 bg-gradient-to-r from-indigo-50 to-purple-50 border-b">
+        <div className="shrink-0 flex flex-wrap items-start justify-between gap-3 p-3 sm:p-4 bg-gradient-to-r from-indigo-50 to-purple-50 border-b">
           <div className="flex items-center gap-3">
             <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-indigo-500 to-purple-500 text-white flex items-center justify-center">👀</div>
             <div>
@@ -92,15 +123,15 @@ export default function SpectatorSideScroller({ roomId, players = {}, questions 
               </div>
             </div>
           </div>
-          <div className="flex items-center gap-2">
-            <button onClick={onPrev} disabled={!Object.keys(players).length} className="px-4 py-2 rounded-xl bg-indigo-600 text-white shadow hover:bg-indigo-700 disabled:bg-gray-300 disabled:text-gray-600">← ก่อนหน้า</button>
-            <button onClick={onNext} disabled={!Object.keys(players).length} className="px-4 py-2 rounded-xl bg-purple-600 text-white shadow hover:bg-purple-700 disabled:bg-gray-300 disabled:text-gray-600">ถัดไป →</button>
-            <button onClick={onClose} className="px-4 py-2 rounded-xl bg-gray-800 hover:bg-gray-900 text-white shadow">ปิด</button>
+          <div className="flex flex-wrap items-center gap-2 justify-end">
+            <button onClick={onPrev} disabled={!Object.keys(players).length} className="px-3 sm:px-4 py-2 rounded-xl bg-indigo-600 text-white shadow hover:bg-indigo-700 disabled:bg-gray-300 disabled:text-gray-600 text-sm sm:text-base">← ก่อนหน้า</button>
+            <button onClick={onNext} disabled={!Object.keys(players).length} className="px-3 sm:px-4 py-2 rounded-xl bg-purple-600 text-white shadow hover:bg-purple-700 disabled:bg-gray-300 disabled:text-gray-600 text-sm sm:text-base">ถัดไป →</button>
+            <button onClick={onClose} className="px-3 sm:px-4 py-2 rounded-xl bg-gray-800 hover:bg-gray-900 text-white shadow text-sm sm:text-base">ปิด</button>
           </div>
         </div>
 
         {/* World */}
-  <div className="relative w-full flex items-center justify-center bg-[#9bd1ff]">
+  <div className="relative w-full flex-1 min-h-0 overflow-auto bg-[#9bd1ff]">
           {/* Floating name tab for clarity */}
           {selectedPlayer && (
             <div className="absolute top-2 left-2 z-10">
@@ -109,7 +140,8 @@ export default function SpectatorSideScroller({ roomId, players = {}, questions 
               </div>
             </div>
           )}
-          <svg width={canvasW} height={canvasH} viewBox={`0 0 ${worldUsed} ${VIEW_H}`} className="my-4" style={{ width: canvasW, height: canvasH }}>
+          <div className="w-full h-full flex items-center justify-center p-2 sm:p-4">
+          <svg width={canvasW} height={canvasH} viewBox={`0 0 ${worldUsed} ${VIEW_H}`} className="my-2" style={{ width: canvasW, height: canvasH }}>
             {/* Sky */}
             <rect x="0" y="0" width={worldUsed} height={VIEW_H} fill="#9cd3ff" />
             {/* Ground */}
@@ -139,6 +171,7 @@ export default function SpectatorSideScroller({ roomId, players = {}, questions 
               );
             })}
           </svg>
+          </div>
         </div>
       </div>
     </div>

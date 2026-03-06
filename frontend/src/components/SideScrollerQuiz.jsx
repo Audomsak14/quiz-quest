@@ -8,43 +8,192 @@ import { profileStorage } from "@/lib/profileStorage";
 function rectIntersect(x1, y1, w1, h1, x2, y2, w2, h2) {
   return x1 < x2 + w2 && x1 + w1 > x2 && y1 < y2 + h2 && y1 + h1 > y2;
 }
-function buildSymmetricOffsets(count, gap) {
+
+function clamp(value, min, max) {
+  return Math.max(min, Math.min(max, value));
+}
+
+function buildSymmetricOffsets(count, gap, { includeCenter = true } = {}) {
   if (count <= 0) return [];
-  const arr = [0];
-  let step = 1;
+  const arr = includeCenter ? [0] : [];
+  let step = includeCenter ? 1 : 0;
   while (arr.length < count) {
-    arr.push(step * gap);
+    const distance = (step + 1) * gap;
+    arr.push(distance);
     if (arr.length >= count) break;
-    arr.push(-step * gap);
+    arr.push(-distance);
     step++;
   }
   return arr;
+}
+
+function hashSeed(input) {
+  const text = String(input || 'quiz-quest');
+  let hash = 2166136261;
+  for (let i = 0; i < text.length; i++) {
+    hash ^= text.charCodeAt(i);
+    hash = Math.imul(hash, 16777619);
+  }
+  return hash >>> 0;
+}
+
+function seededRandomFactory(seedInput) {
+  let t = hashSeed(seedInput) || 1;
+  return () => {
+    t += 0x6D2B79F5;
+    let r = Math.imul(t ^ (t >>> 15), 1 | t);
+    r ^= r + Math.imul(r ^ (r >>> 7), 61 | r);
+    return ((r ^ (r >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+function shuffleArray(source = [], seedInput) {
+  const arr = [...source];
+  const random = seededRandomFactory(seedInput);
+  for (let i = arr.length - 1; i > 0; i--) {
+    const j = Math.floor(random() * (i + 1));
+    [arr[i], arr[j]] = [arr[j], arr[i]];
+  }
+  return arr;
+}
+
+function buildQuestionOffsets(count, gap, seedInput) {
+  if (count <= 0) return [];
+  const symmetric = buildSymmetricOffsets(count, gap, { includeCenter: false });
+  return shuffleArray(symmetric, seedInput).slice(0, count);
+}
+
+function buildStaticPlatforms(worldW, groundY) {
+  const defs = [
+    { ratio: 0.16, dy: 130, w: 260 },
+    { ratio: 0.33, dy: 210, w: 220 },
+    { ratio: 0.5, dy: 165, w: 260 },
+    { ratio: 0.67, dy: 220, w: 220 },
+    { ratio: 0.84, dy: 130, w: 260 },
+  ];
+
+  return defs.map((def, index) => {
+    const x = clamp(Math.round(worldW * def.ratio - def.w / 2), 120, worldW - def.w - 120);
+    return {
+      id: `pf-static-${index + 1}`,
+      x,
+      y: groundY - def.dy,
+      w: def.w,
+      h: 18,
+      kind: 'static',
+    };
+  });
+}
+
+function buildMovingPlatformDefs(worldW, groundY) {
+  const defs = [
+    { ratio: 0.27, dy: 265, w: 180, amplitude: 62, speed: 0.0018, phase: 0 },
+    { ratio: 0.73, dy: 285, w: 190, amplitude: 74, speed: 0.0015, phase: Math.PI },
+  ];
+
+  return defs.map((def, index) => {
+    const x = clamp(Math.round(worldW * def.ratio - def.w / 2), 140, worldW - def.w - 140);
+    return {
+      id: `pf-moving-${index + 1}`,
+      x,
+      baseY: groundY - def.dy,
+      w: def.w,
+      h: 18,
+      amplitude: def.amplitude,
+      speed: def.speed,
+      phase: def.phase,
+      kind: 'moving',
+    };
+  });
+}
+
+function getMovingPlatformsAtTime(defs = [], nowMs = 0) {
+  return defs.map((platform) => ({
+    ...platform,
+    y: Math.round(platform.baseY + Math.sin(nowMs * platform.speed + platform.phase) * platform.amplitude),
+  }));
+}
+
+function buildQuestionAnchors(worldW, groundY, staticPlatforms = []) {
+  const center = worldW / 2;
+  const groundOffsets = buildSymmetricOffsets(8, 280, { includeCenter: false });
+  const groundAnchors = groundOffsets
+    .map((off, index) => ({
+      id: `anchor-ground-${index + 1}`,
+      x: clamp(Math.round(center + off), 80, worldW - 80),
+      y: groundY - 40,
+    }));
+
+  const platformAnchors = staticPlatforms.map((platform, index) => ({
+    id: `anchor-platform-${index + 1}`,
+    x: Math.round(platform.x + platform.w / 2),
+    y: platform.y - 40,
+  }));
+
+  return [...platformAnchors, ...groundAnchors];
+}
+
+function buildQuestionSpotsFromAnchors(questions = [], anchors = [], worldW, seedInput) {
+  if (!questions.length) return [];
+  const fallbackAnchor = { x: worldW / 2, y: 540 };
+  const shuffledAnchors = anchors.length ? shuffleArray(anchors, `${seedInput}:anchors`) : [fallbackAnchor];
+
+  return questions.map((question, index) => {
+    const anchor = shuffledAnchors[index % shuffledAnchors.length] || fallbackAnchor;
+    const layer = Math.floor(index / shuffledAnchors.length);
+    const xShift = layer > 0 ? ((layer % 2 === 0 ? -1 : 1) * (42 * layer)) : 0;
+    const yShift = layer > 0 ? (18 * (layer % 3)) : 0;
+
+    return {
+      id: question.id,
+      x: clamp(Math.round(anchor.x + xShift), 70, worldW - 70),
+      y: clamp(Math.round(anchor.y - yShift), 120, 620),
+      question,
+    };
+  });
 }
 
 function normalizeNameKey(name) {
   return String(name || '').trim().toLowerCase();
 }
 
+function normalizePlayerKey(value) {
+  return String(value || '').trim().toLowerCase();
+}
+
 function buildRoomProgress(roomPlayers = [], attempts = []) {
   const activePlayers = roomPlayers
-    .map((player) => ({
-      name: String(player?.name || '').trim(),
-      key: normalizeNameKey(player?.name),
-    }))
-    .filter((player) => player.name && player.key);
+    .map((player) => {
+      const idKey = normalizePlayerKey(player?.playerId);
+      const name = String(player?.name || '').trim();
+      const nameKey = normalizeNameKey(player?.name);
+      const canonicalKey = idKey || nameKey;
+      return { idKey, name, nameKey, canonicalKey };
+    })
+    .filter((player) => player.name && player.canonicalKey);
 
-  const uniqueByKey = new Map();
+  const canonicalPlayers = new Map();
+  const aliasToCanonical = new Map();
   activePlayers.forEach((player) => {
-    if (!uniqueByKey.has(player.key)) uniqueByKey.set(player.key, player);
+    if (!canonicalPlayers.has(player.canonicalKey)) {
+      canonicalPlayers.set(player.canonicalKey, player);
+    }
+    aliasToCanonical.set(player.canonicalKey, player.canonicalKey);
+    if (player.idKey) aliasToCanonical.set(player.idKey, player.canonicalKey);
+    if (player.nameKey) aliasToCanonical.set(player.nameKey, player.canonicalKey);
   });
 
   const bestByPlayer = new Map();
   (attempts || []).forEach((attempt) => {
-    const key = normalizeNameKey(attempt?.playerName);
-    if (!key || !uniqueByKey.has(key)) return;
+    const idKey = normalizePlayerKey(attempt?.playerId);
+    const nameKey = normalizeNameKey(attempt?.playerName);
+    const key = (idKey && aliasToCanonical.get(idKey))
+      || (nameKey && aliasToCanonical.get(nameKey))
+      || '';
+    if (!key) return;
 
     const next = {
-      name: String(attempt?.playerName || uniqueByKey.get(key)?.name || 'ผู้เล่น'),
+      name: String(attempt?.playerName || canonicalPlayers.get(key)?.name || 'ผู้เล่น'),
       score: Number(attempt?.score || 0),
       timestamp: attempt?.timestamp ? new Date(attempt.timestamp).getTime() : Number.POSITIVE_INFINITY,
     };
@@ -55,11 +204,11 @@ function buildRoomProgress(roomPlayers = [], attempts = []) {
     }
   });
 
-  const rows = Array.from(uniqueByKey.values())
+  const rows = Array.from(canonicalPlayers.values())
     .map((player) => {
-      const best = bestByPlayer.get(player.key);
+      const best = bestByPlayer.get(player.canonicalKey);
       return {
-        playerId: player.key,
+        playerId: player.idKey || player.canonicalKey,
         playerName: player.name,
         finalScore: best ? best.score : 0,
         done: Boolean(best),
@@ -167,11 +316,13 @@ export default function SideScrollerQuiz() {
   const [answeredByPlayer, setAnsweredByPlayer] = useState({});
   const [blocks, setBlocks] = useState([]);
   const [platforms, setPlatforms] = useState([]);
+  const movingPlatformsRef = useRef([]);
   const [gameResults, setGameResults] = useState(null);
   const [showRankings, setShowRankings] = useState(false);
   const [gameCompleted, setGameCompleted] = useState(false);
   const [localResults, setLocalResults] = useState(null);
   const [waitingBoard, setWaitingBoard] = useState({ rows: [], totalPlayers: 0, completedPlayers: 0 });
+  const [isTouchDevice, setIsTouchDevice] = useState(false);
   const [allPlayersFinished, setAllPlayersFinished] = useState(false);
   const completedOnceRef = useRef(false);
   const completionSavedRef = useRef(false);
@@ -211,9 +362,32 @@ export default function SideScrollerQuiz() {
   // Ensure no buffered jump from overlays
   useEffect(() => {
     const inp = inputsRef.current;
+    inp.left = false;
+    inp.right = false;
     inp.jumpPressed = false;
     inp.jumpHeld = false;
   }, [showQuestion, showRankings]);
+
+  const setLeftPressed = useCallback((pressed) => {
+    inputsRef.current.left = pressed;
+  }, []);
+
+  const setRightPressed = useCallback((pressed) => {
+    inputsRef.current.right = pressed;
+  }, []);
+
+  const setJumpPressed = useCallback((pressed) => {
+    const inp = inputsRef.current;
+    if (pressed) {
+      if (!inp.jumpHeld) {
+        inp.jumpPressed = true;
+        inp.jumpPressedAt = performance.now();
+      }
+      inp.jumpHeld = true;
+      return;
+    }
+    inp.jumpHeld = false;
+  }, []);
 
   // Redirect helper
   const redirectToLobby = useCallback(() => {
@@ -269,7 +443,7 @@ export default function SideScrollerQuiz() {
     };
   }, [gameCompleted, allPlayersFinished, roomId]);
 
-  // Load questions and build world/platforms symmetrically
+  // Load questions and build world/layout
   useEffect(() => {
     const load = async () => {
       if (!roomId) return;
@@ -277,62 +451,51 @@ export default function SideScrollerQuiz() {
         const r = await fetch(`http://localhost:5000/api/game/questions/${roomId}`);
         const data = await r.json();
         const qArr = Array.isArray(data?.questions) ? data.questions : (Array.isArray(data) ? data : []);
-        const count = qArr.length || 4;
+        const questionList = qArr.length
+          ? qArr
+          : Array.from({ length: 4 }).map((_, i) => ({ id: `q${i + 1}`, text: `Q${i + 1}`, choices: ["A", "B", "C", "D"], answerIndex: i % 4, points: 100 }));
+        const count = questionList.length;
         const GAP = 320; const LEFT_PAD = 800; const RIGHT_PAD = 800;
         const minWorld = 3600;
         const needed = count > 1 ? (count - 1) * GAP : 0;
         const newWorldW = Math.max(minWorld, LEFT_PAD + RIGHT_PAD + needed + VIEW_W);
         setWorldW(newWorldW);
 
-        const offsets = buildSymmetricOffsets(count, GAP);
-        const center = newWorldW / 2;
+        const staticPlatforms = buildStaticPlatforms(newWorldW, GROUND_Y);
+        const movingDefs = buildMovingPlatformDefs(newWorldW, GROUND_Y);
+        const normalizedQuestions = questionList.map((q, index) => ({
+          id: q.id || `q${index + 1}`,
+          text: q.text,
+          choices: q.choices,
+          answerIndex: q.answerIndex,
+          points: q.points || 100,
+        }));
+        const anchors = buildQuestionAnchors(newWorldW, GROUND_Y, staticPlatforms);
+        const questionSpots = buildQuestionSpotsFromAnchors(normalizedQuestions, anchors, newWorldW, `${roomId}:questions`);
 
-        const localPlatforms = [];
-        const platLevels = [
-          { dy: 120, w: 260 },
-          // Lower the higher platform slightly to make it reachable
-          { dy: 150, w: 220 },
-        ];
-
-        const qs = (qArr.length ? qArr : Array.from({ length: count }).map((_, i) => ({ id: `q${i+1}`, text: `Q${i+1}`, choices: ["A","B","C","D"], answerIndex: i % 4, points: 100 })))
-          .map((q, i) => {
-            const off = offsets[i] || 0;
-            const level = i % 3; // 0 ground, 1/2 platforms
-            let y = GROUND_Y - 40;
-            if (level === 1 || level === 2) {
-              const lvl = platLevels[level - 1];
-              const w = lvl.w; const px = center + off - w / 2; const py = GROUND_Y - lvl.dy;
-              localPlatforms.push({ x: px, y: py, w, h: 18 });
-              y = py - 40;
-            }
-            return {
-              id: q.id,
-              x: center + off,
-              y,
-              question: { id: q.id, text: q.text, choices: q.choices, answerIndex: q.answerIndex, points: q.points || 100 }
-            };
-          });
-
-        setPlatforms(localPlatforms);
-        setQuestionSpots(qs);
+        setPlatforms(staticPlatforms);
+        movingPlatformsRef.current = movingDefs;
+        setQuestionSpots(questionSpots);
       } catch (e) {
         const count = 4; const GAP = 320; const LEFT_PAD = 800; const RIGHT_PAD = 800;
         const newWorldW = Math.max(3600, LEFT_PAD + RIGHT_PAD + (count - 1) * GAP + VIEW_W);
         setWorldW(newWorldW);
-        const center = newWorldW / 2;
-        const offsets = buildSymmetricOffsets(count, GAP);
-        const localPlatforms = [];
-        setQuestionSpots(offsets.map((off, i) => {
-          const usePlat = i % 3 !== 0;
-          let y = GROUND_Y - 40;
-          if (usePlat) {
-            // Mirror lowered platform height in fallback as well (170 -> 150)
-            const dy = i % 2 ? 120 : 150; const w = i % 2 ? 260 : 220; const px = center + off - w / 2; const py = GROUND_Y - dy;
-            localPlatforms.push({ x: px, y: py, w, h: 18 }); y = py - 40;
-          }
-          return ({ id: `q${i+1}`, x: center + off, y, question: { id: `q${i+1}`, text: `คำถามตัวอย่าง ${i+1}`, choices: ["A","B","C","D"], answerIndex: i % 4, points: 100 } });
+
+        const staticPlatforms = buildStaticPlatforms(newWorldW, GROUND_Y);
+        const movingDefs = buildMovingPlatformDefs(newWorldW, GROUND_Y);
+        const fallbackQuestions = Array.from({ length: count }).map((_, i) => ({
+          id: `q${i + 1}`,
+          text: `คำถามตัวอย่าง ${i + 1}`,
+          choices: ["A", "B", "C", "D"],
+          answerIndex: i % 4,
+          points: 100,
         }));
-        setPlatforms(localPlatforms);
+        const anchors = buildQuestionAnchors(newWorldW, GROUND_Y, staticPlatforms);
+        const questionSpots = buildQuestionSpotsFromAnchors(fallbackQuestions, anchors, newWorldW, `${roomId || 'fallback'}:questions`);
+
+        setPlatforms(staticPlatforms);
+        movingPlatformsRef.current = movingDefs;
+        setQuestionSpots(questionSpots);
       }
     };
     load();
@@ -402,6 +565,21 @@ export default function SideScrollerQuiz() {
   useEffect(() => {
     const t = setInterval(() => setUiTick(v => v + 1), 150);
     return () => clearInterval(t);
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const mediaQuery = window.matchMedia('(pointer: coarse)');
+    const update = () => {
+      setIsTouchDevice(Boolean(mediaQuery.matches || navigator.maxTouchPoints > 0));
+    };
+    update();
+    mediaQuery.addEventListener?.('change', update);
+    window.addEventListener('resize', update);
+    return () => {
+      mediaQuery.removeEventListener?.('change', update);
+      window.removeEventListener('resize', update);
+    };
   }, []);
 
   // Sockets
@@ -615,7 +793,9 @@ export default function SideScrollerQuiz() {
   if (pos.y + 40 >= GROUND_Y && vel.y >= 0) { pos.y = GROUND_Y - 40; vel.y = 0; if (!wasGrounded) lastLandingAtRef.current = now; footOnSurface = true; supportTypeRef.current = 'ground'; supportYRef.current = GROUND_Y; }
 
         // platforms collide (solid both ways) with inclusive top-touch detection and resting support to prevent micro-bounce
-        for (const pf of platforms) {
+          const animatedPlatforms = getMovingPlatformsAtTime(movingPlatformsRef.current, now);
+          const activePlatforms = [...platforms, ...animatedPlatforms];
+          for (const pf of activePlatforms) {
           // Horizontal overlap between player (width 40) and platform
           const playerLeft = pos.x - 20, playerRight = pos.x + 20;
           const platLeft = pf.x, platRight = pf.x + pf.w;
@@ -867,7 +1047,17 @@ export default function SideScrollerQuiz() {
       }
 
       // platforms
-      ctx.fillStyle = "#8b5cf6"; platforms.forEach(p => { ctx.fillRect(p.x - cam, p.y, p.w, p.h); });
+      ctx.fillStyle = "#8b5cf6";
+      platforms.forEach(p => { ctx.fillRect(p.x - cam, p.y, p.w, p.h); });
+
+      const animatedPlatforms = getMovingPlatformsAtTime(movingPlatformsRef.current, performance.now());
+      ctx.fillStyle = "#06b6d4";
+      animatedPlatforms.forEach(p => {
+        ctx.fillRect(p.x - cam, p.y, p.w, p.h);
+        ctx.strokeStyle = "rgba(255,255,255,0.65)";
+        ctx.lineWidth = 2;
+        ctx.strokeRect(p.x - cam, p.y, p.w, p.h);
+      });
 
       // question blocks (always visible). Color reflects answer status per block.
       blocks.forEach(b => {
@@ -1255,6 +1445,33 @@ export default function SideScrollerQuiz() {
       setGameCompleted(true);
       setShowRankings(true);
 
+      const activePlayersNow = 1 + Object.keys(otherPlayers || {}).length;
+      if (activePlayersNow <= 1) {
+        setWaitingBoard({
+          rows: [{
+            playerId: normalizePlayerKey(finalPlayerId),
+            playerName,
+            finalScore,
+            done: true,
+            timestamp: Date.now(),
+          }],
+          totalPlayers: 1,
+          completedPlayers: 1,
+        });
+        setAllPlayersFinished(true);
+        setLocalResults({
+          roomId,
+          rankings: [{
+            rank: 1,
+            playerId: normalizePlayerKey(finalPlayerId),
+            playerName,
+            finalScore,
+            completionTime: Date.now(),
+            questionsAnswered: answeredCount,
+          }],
+        });
+      }
+
       const saveCompletion = async () => {
         if (completionSavedRef.current) return;
         completionSavedRef.current = true;
@@ -1289,7 +1506,13 @@ export default function SideScrollerQuiz() {
     roomId,
     playerName,
     providedPlayerId,
+    otherPlayers,
   ]);
+
+  const getScoreValue = useCallback((row) => {
+    const value = Number(row?.finalScore ?? row?.score ?? 0);
+    return Number.isFinite(value) ? value : 0;
+  }, []);
 
   // HUD + Canvas + Modals
   return (
@@ -1357,6 +1580,55 @@ export default function SideScrollerQuiz() {
         </div>
       </div>
 
+      {!showQuestion && !showRankings && isTouchDevice && (
+        <div className="fixed bottom-3 left-0 right-0 z-40 px-4" style={{ touchAction: 'none' }}>
+          <div className="mx-auto max-w-md rounded-3xl border border-white/45 bg-white/20 backdrop-blur-md shadow-2xl px-3 py-2 flex items-end justify-between">
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                aria-label="เดินซ้าย"
+                onPointerDown={(e) => { e.preventDefault(); setLeftPressed(true); }}
+                onPointerUp={(e) => { e.preventDefault(); setLeftPressed(false); }}
+                onPointerCancel={() => setLeftPressed(false)}
+                onPointerLeave={() => setLeftPressed(false)}
+                onContextMenu={(e) => e.preventDefault()}
+                className="group relative w-16 h-16 rounded-2xl bg-gradient-to-b from-slate-700/95 to-slate-900/95 text-white text-2xl font-black border border-white/35 shadow-[0_8px_24px_rgba(15,23,42,0.45)] active:scale-95 active:shadow-[0_4px_12px_rgba(15,23,42,0.5)] transition-all"
+              >
+                <span className="absolute inset-0 rounded-2xl bg-white/10 opacity-0 group-active:opacity-100 transition-opacity" />
+                <span className="relative">←</span>
+              </button>
+              <button
+                type="button"
+                aria-label="เดินขวา"
+                onPointerDown={(e) => { e.preventDefault(); setRightPressed(true); }}
+                onPointerUp={(e) => { e.preventDefault(); setRightPressed(false); }}
+                onPointerCancel={() => setRightPressed(false)}
+                onPointerLeave={() => setRightPressed(false)}
+                onContextMenu={(e) => e.preventDefault()}
+                className="group relative w-16 h-16 rounded-2xl bg-gradient-to-b from-slate-700/95 to-slate-900/95 text-white text-2xl font-black border border-white/35 shadow-[0_8px_24px_rgba(15,23,42,0.45)] active:scale-95 active:shadow-[0_4px_12px_rgba(15,23,42,0.5)] transition-all"
+              >
+                <span className="absolute inset-0 rounded-2xl bg-white/10 opacity-0 group-active:opacity-100 transition-opacity" />
+                <span className="relative">→</span>
+              </button>
+            </div>
+
+            <button
+              type="button"
+              aria-label="กระโดด"
+              onPointerDown={(e) => { e.preventDefault(); setJumpPressed(true); }}
+              onPointerUp={(e) => { e.preventDefault(); setJumpPressed(false); }}
+              onPointerCancel={() => setJumpPressed(false)}
+              onPointerLeave={() => setJumpPressed(false)}
+              onContextMenu={(e) => e.preventDefault()}
+              className="group relative w-20 h-20 rounded-full bg-gradient-to-b from-fuchsia-500 to-indigo-600 text-white text-xs font-black tracking-wide border-2 border-white/50 shadow-[0_12px_30px_rgba(79,70,229,0.55)] active:scale-95 active:shadow-[0_6px_16px_rgba(79,70,229,0.6)] transition-all"
+            >
+              <span className="absolute inset-0 rounded-full bg-white/10 opacity-0 group-active:opacity-100 transition-opacity" />
+              <span className="relative">⤴ JUMP</span>
+            </button>
+          </div>
+        </div>
+      )}
+
       {!gameStarted && (<div className="mt-4 text-center text-amber-700 bg-amber-100 border border-amber-300 px-4 py-2 rounded-xl">รอครูเริ่มเกมอยู่...</div>)}
 
       {showQuestion && currentQuestion && (
@@ -1409,7 +1681,7 @@ export default function SideScrollerQuiz() {
                         <div className="text-xs text-gray-600">{allPlayersFinished ? 'ตอบครบแล้ว' : (r.done ? 'ตอบครบแล้ว' : 'กำลังทำแบบทดสอบ')}</div>
                       </div>
                     </div>
-                    <div className="text-lg font-extrabold text-emerald-700">{r.finalScore} คะแนน</div>
+                    <div className="text-lg font-extrabold text-emerald-700">{getScoreValue(r)} คะแนน</div>
                   </div>
                 );
               })}
