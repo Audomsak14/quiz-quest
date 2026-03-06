@@ -932,30 +932,38 @@ const teacherService = {
 				playerName: { not: null },
 			},
 			select: {
-				playerId: true,
 				playerName: true,
 				timestamp: true,
 			},
 			orderBy: { timestamp: 'desc' },
-			take: 1000,
+			take: 5000,
 		});
 
-		const seen = new Set();
-		const names = [];
+		// Group by display name (case-insensitive) so each student appears once.
+		// Also return how many attempts they did today.
+		const byName = new Map();
 		for (const a of attempts || []) {
 			const nm = String(a?.playerName || '').trim();
 			if (!nm) continue;
-			const key = a?.playerId
-				? `id:${String(a.playerId)}`
-				: `name:${nm.toLowerCase()}`;
-			if (seen.has(key)) continue;
-			seen.add(key);
-			names.push(nm);
-			if (names.length >= 200) break;
+			const key = nm.toLowerCase();
+			const prev = byName.get(key);
+			if (!prev) {
+				// attempts are ordered desc => first seen is the latest pretty name
+				byName.set(key, { name: nm, count: 1 });
+			} else {
+				prev.count += 1;
+			}
+			if (byName.size >= 500) break;
 		}
 
-		names.sort((a, b) => String(a).localeCompare(String(b), 'th'));
-		return { participants: names };
+		const participants = Array.from(byName.values());
+		participants.sort((a, b) => {
+			const dc = (Number(b?.count) || 0) - (Number(a?.count) || 0);
+			if (dc !== 0) return dc;
+			return String(a?.name || '').localeCompare(String(b?.name || ''), 'th');
+		});
+
+		return { participants };
 	},
 };
 

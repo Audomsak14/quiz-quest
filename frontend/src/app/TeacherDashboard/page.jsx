@@ -271,11 +271,18 @@ export default function TeacherDashboard() {
                 <div className="text-white/80">กำลังโหลดรายชื่อ…</div>
               ) : (Array.isArray(todayParticipants) && todayParticipants.length ? (
                 <div className="max-h-72 overflow-y-auto space-y-2 pr-1">
-                  {todayParticipants.map((name, idx) => (
-                    <div key={`${name}-${idx}`} className="bg-white/5 border border-white/10 rounded-2xl px-3 py-2 text-white">
-                      {name}
-                    </div>
-                  ))}
+                  {todayParticipants.map((item, idx) => {
+                    const name = typeof item === 'string' ? item : String(item?.name || '');
+                    const count = typeof item === 'string' ? 1 : Number(item?.count) || 1;
+                    const timesText = `เข้าสอบ ${count} ครั้ง`;
+
+                    return (
+                      <div key={`${name}-${idx}`} className="bg-white/5 border border-white/10 rounded-2xl px-3 py-2 text-white flex items-center justify-between gap-3">
+                        <div className="font-semibold truncate">{name}</div>
+                        <div className="text-white/80 text-sm whitespace-nowrap">{timesText}</div>
+                      </div>
+                    );
+                  })}
                 </div>
               ) : (
                 <div className="text-white/80">ยังไม่มีนักเรียนเข้าร่วมวันนี้</div>
