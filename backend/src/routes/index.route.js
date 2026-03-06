@@ -120,5 +120,6 @@ router.post('/game/state', validateBody(gameStateSchema), gameController.upsertS
 router.get('/game/state/:roomId', validateParams(idParamSchema), gameController.getState);
 
 router.get('/teacher/dashboard', requireAuth, teacherController.dashboard);
+router.get('/teacher/today-participants', requireAuth, teacherController.todayParticipants);
 
 module.exports = router;

@@ -921,6 +921,42 @@ const teacherService = {
 			testsToday,
 		};
 	},
+
+	async todayParticipants() {
+		const todayStart = new Date();
+		todayStart.setHours(0, 0, 0, 0);
+
+		const attempts = await prisma.gameAttempt.findMany({
+			where: {
+				timestamp: { gte: todayStart },
+				playerName: { not: null },
+			},
+			select: {
+				playerId: true,
+				playerName: true,
+				timestamp: true,
+			},
+			orderBy: { timestamp: 'desc' },
+			take: 1000,
+		});
+
+		const seen = new Set();
+		const names = [];
+		for (const a of attempts || []) {
+			const nm = String(a?.playerName || '').trim();
+			if (!nm) continue;
+			const key = a?.playerId
+				? `id:${String(a.playerId)}`
+				: `name:${nm.toLowerCase()}`;
+			if (seen.has(key)) continue;
+			seen.add(key);
+			names.push(nm);
+			if (names.length >= 200) break;
+		}
+
+		names.sort((a, b) => String(a).localeCompare(String(b), 'th'));
+		return { participants: names };
+	},
 };
 
 module.exports = {

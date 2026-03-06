@@ -9,6 +9,9 @@ export default function TeacherDashboard() {
   const router = useRouter();
   const [questionSets, setQuestionSets] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [todayOpen, setTodayOpen] = useState(false);
+  const [todayParticipants, setTodayParticipants] = useState([]);
+  const [todayParticipantsLoading, setTodayParticipantsLoading] = useState(false);
   const [dashboardStats, setDashboardStats] = useState({
     studentsJoined: 0,
     averageScorePercent: 0,
@@ -107,6 +110,26 @@ export default function TeacherDashboard() {
     clearAuthSession();
     await Swal.fire({ icon: 'success', title: 'ออกจากระบบสำเร็จ', timer: 1200, showConfirmButton: false });
     router.push('/login');
+  };
+
+  const toggleTodayParticipants = async () => {
+    const next = !todayOpen;
+    setTodayOpen(next);
+    if (!next) return;
+    if (todayParticipantsLoading) return;
+    if (Array.isArray(todayParticipants) && todayParticipants.length) return;
+
+    setTodayParticipantsLoading(true);
+    try {
+      const res = await axios.get('http://localhost:5000/api/teacher/today-participants', withAuth());
+      const list = Array.isArray(res.data?.participants) ? res.data.participants : [];
+      setTodayParticipants(list);
+    } catch (e) {
+      console.error('Failed to load today participants', e);
+      setTodayParticipants([]);
+    } finally {
+      setTodayParticipantsLoading(false);
+    }
   };
 
   if (isLoading) {
@@ -220,7 +243,11 @@ export default function TeacherDashboard() {
           </div>
         </div>
 
-        <div className="group bg-gradient-to-br from-red-500/20 to-orange-500/20 backdrop-blur-2xl rounded-2xl p-6 border border-white/10 shadow-xl hover:scale-105 hover:shadow-2xl transition-all duration-300">
+        <button
+          type="button"
+          onClick={toggleTodayParticipants}
+          className="group bg-gradient-to-br from-red-500/20 to-orange-500/20 backdrop-blur-2xl rounded-2xl p-6 border border-white/10 shadow-xl hover:scale-105 hover:shadow-2xl transition-all duration-300 text-left"
+        >
           <div className="flex items-center justify-between">
             <div>
               <h3 className="text-4xl font-bold text-white mb-2">{dashboardStats.testsToday}</h3>
@@ -233,8 +260,42 @@ export default function TeacherDashboard() {
               </svg>
             </div>
           </div>
-        </div>
+        </button>
       </div>
+
+      {todayOpen && (
+        <div className="relative z-10 mb-10">
+          <div className="bg-white/5 backdrop-blur-2xl rounded-3xl shadow-2xl p-6 border border-white/10">
+            <div className="flex items-center justify-between gap-4 mb-4">
+              <div>
+                <h2 className="text-2xl font-bold text-white">รายชื่อนักเรียนที่เข้าร่วมวันนี้</h2>
+                <p className="text-red-200">คลิก “การทดสอบวันนี้” เพื่อซ่อน/แสดง</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setTodayOpen(false)}
+                className="bg-white/10 hover:bg-white/15 text-white font-semibold px-4 py-2 rounded-xl border border-white/10"
+              >
+                ปิด
+              </button>
+            </div>
+
+            {todayParticipantsLoading ? (
+              <div className="text-white/80">กำลังโหลดรายชื่อ…</div>
+            ) : (Array.isArray(todayParticipants) && todayParticipants.length ? (
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+                {todayParticipants.map((name, idx) => (
+                  <div key={`${name}-${idx}`} className="bg-white/5 border border-white/10 rounded-2xl px-4 py-3 text-white">
+                    {name}
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="text-white/80">ยังไม่มีนักเรียนเข้าร่วมวันนี้</div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Create New Question Set Button */}
       <div className="relative z-10 mb-10">

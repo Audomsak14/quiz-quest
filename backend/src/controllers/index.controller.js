@@ -156,6 +156,14 @@ const teacherController = {
 		const stats = await teacherService.dashboard();
 		res.json({ success: true, stats });
 	}),
+
+	todayParticipants: asyncHandler(async (req, res) => {
+		if (req.user?.role !== 'teacher') {
+			return res.status(403).json({ success: false, error: 'Forbidden' });
+		}
+		const data = await teacherService.todayParticipants();
+		res.json({ success: true, ...data });
+	}),
 };
 
 module.exports = {
