@@ -149,6 +149,14 @@ function calcPercentScore(score, maxScore) {
 	return Math.min(100, Math.max(0, pct));
 }
 
+function normalizeDisplayName(value) {
+	return String(value || '')
+		.normalize('NFKC')
+		.replace(/[\u200B-\u200D\uFEFF]/g, '')
+		.replace(/\s+/g, ' ')
+		.trim();
+}
+
 const authService = {
 	async register(payload) {
 		const username = payload.username.trim();
@@ -939,11 +947,11 @@ const teacherService = {
 			take: 5000,
 		});
 
-		// Group by display name (case-insensitive) so each student appears once.
+		// Group by display name (case-insensitive, normalized) so each student appears once.
 		// Also return how many attempts they did today.
 		const byName = new Map();
 		for (const a of attempts || []) {
-			const nm = String(a?.playerName || '').trim();
+			const nm = normalizeDisplayName(a?.playerName);
 			if (!nm) continue;
 			const key = nm.toLowerCase();
 			const prev = byName.get(key);

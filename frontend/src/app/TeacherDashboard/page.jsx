@@ -1,5 +1,5 @@
 "use client";
-import { useState, useEffect } from "react";
+import { useMemo, useState, useEffect } from "react";
 import Swal from "sweetalert2";
 import { useRouter } from "next/navigation";
 import axios from "axios";
@@ -17,6 +17,35 @@ export default function TeacherDashboard() {
     averageScorePercent: 0,
     testsToday: 0,
   });
+
+  const mergedTodayParticipants = useMemo(() => {
+    const list = Array.isArray(todayParticipants) ? todayParticipants : [];
+    const normalizeName = (value) => String(value || '')
+      .normalize('NFKC')
+      .replace(/[\u200B-\u200D\uFEFF]/g, '')
+      .replace(/\s+/g, ' ')
+      .trim();
+
+    const map = new Map();
+    for (const item of list) {
+      const rawName = (typeof item === 'string') ? item : item?.name;
+      const name = normalizeName(rawName);
+      if (!name) continue;
+      const key = name.toLowerCase();
+      const inc = (typeof item === 'string') ? 1 : (Number(item?.count) || 1);
+      const prev = map.get(key);
+      if (!prev) map.set(key, { name, count: inc });
+      else prev.count += inc;
+    }
+
+    const merged = Array.from(map.values());
+    merged.sort((a, b) => {
+      const dc = (Number(b?.count) || 0) - (Number(a?.count) || 0);
+      if (dc !== 0) return dc;
+      return String(a?.name || '').localeCompare(String(b?.name || ''), 'th');
+    });
+    return merged;
+  }, [todayParticipants]);
 
   useEffect(() => {
     const { token, role } = getAuthSession();
@@ -269,11 +298,11 @@ export default function TeacherDashboard() {
 
               {todayParticipantsLoading ? (
                 <div className="text-white/80">กำลังโหลดรายชื่อ…</div>
-              ) : (Array.isArray(todayParticipants) && todayParticipants.length ? (
+              ) : (mergedTodayParticipants.length ? (
                 <div className="max-h-72 overflow-y-auto space-y-2 pr-1">
-                  {todayParticipants.map((item, idx) => {
-                    const name = typeof item === 'string' ? item : String(item?.name || '');
-                    const count = typeof item === 'string' ? 1 : Number(item?.count) || 1;
+                  {mergedTodayParticipants.map((item, idx) => {
+                    const name = String(item?.name || '');
+                    const count = Number(item?.count) || 1;
                     const timesText = `เข้าสอบ ${count} ครั้ง`;
 
                     return (
