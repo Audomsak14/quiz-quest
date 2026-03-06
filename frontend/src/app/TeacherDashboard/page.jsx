@@ -112,10 +112,7 @@ export default function TeacherDashboard() {
     router.push('/login');
   };
 
-  const toggleTodayParticipants = async () => {
-    const next = !todayOpen;
-    setTodayOpen(next);
-    if (!next) return;
+  const ensureTodayParticipantsLoaded = async () => {
     if (todayParticipantsLoading) return;
     if (Array.isArray(todayParticipants) && todayParticipants.length) return;
 
@@ -243,59 +240,50 @@ export default function TeacherDashboard() {
           </div>
         </div>
 
-        <button
-          type="button"
-          onClick={toggleTodayParticipants}
-          className="group bg-gradient-to-br from-red-500/20 to-orange-500/20 backdrop-blur-2xl rounded-2xl p-6 border border-white/10 shadow-xl hover:scale-105 hover:shadow-2xl transition-all duration-300 text-left"
+        <div
+          className="relative"
+          onMouseEnter={() => {
+            setTodayOpen(true);
+            ensureTodayParticipantsLoaded();
+          }}
+          onMouseLeave={() => setTodayOpen(false)}
         >
-          <div className="flex items-center justify-between">
-            <div>
-              <h3 className="text-4xl font-bold text-white mb-2">{dashboardStats.testsToday}</h3>
-              <p className="text-red-200 font-semibold text-lg">การทดสอบวันนี้</p>
-              <div className="w-12 h-1 bg-gradient-to-r from-red-400 to-orange-400 rounded-full mt-2"></div>
-            </div>
-            <div className="w-16 h-16 bg-gradient-to-br from-red-500 to-orange-500 rounded-2xl flex items-center justify-center shadow-xl group-hover:rotate-12 transition-transform duration-300">
-              <svg className="w-8 h-8 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
-              </svg>
-            </div>
-          </div>
-        </button>
-      </div>
-
-      {todayOpen && (
-        <div className="relative z-10 mb-10">
-          <div className="bg-white/5 backdrop-blur-2xl rounded-3xl shadow-2xl p-6 border border-white/10">
-            <div className="flex items-center justify-between gap-4 mb-4">
+          <div className="group bg-gradient-to-br from-red-500/20 to-orange-500/20 backdrop-blur-2xl rounded-2xl p-6 border border-white/10 shadow-xl hover:scale-105 hover:shadow-2xl transition-all duration-300 text-left">
+            <div className="flex items-center justify-between">
               <div>
-                <h2 className="text-2xl font-bold text-white">รายชื่อนักเรียนที่เข้าร่วมวันนี้</h2>
-                <p className="text-red-200">คลิก “การทดสอบวันนี้” เพื่อซ่อน/แสดง</p>
+                <h3 className="text-4xl font-bold text-white mb-2">{dashboardStats.testsToday}</h3>
+                <p className="text-red-200 font-semibold text-lg">การทดสอบวันนี้</p>
+                <div className="w-12 h-1 bg-gradient-to-r from-red-400 to-orange-400 rounded-full mt-2"></div>
               </div>
-              <button
-                type="button"
-                onClick={() => setTodayOpen(false)}
-                className="bg-white/10 hover:bg-white/15 text-white font-semibold px-4 py-2 rounded-xl border border-white/10"
-              >
-                ปิด
-              </button>
+              <div className="w-16 h-16 bg-gradient-to-br from-red-500 to-orange-500 rounded-2xl flex items-center justify-center shadow-xl group-hover:rotate-12 transition-transform duration-300">
+                <svg className="w-8 h-8 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+              </div>
             </div>
-
-            {todayParticipantsLoading ? (
-              <div className="text-white/80">กำลังโหลดรายชื่อ…</div>
-            ) : (Array.isArray(todayParticipants) && todayParticipants.length ? (
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-                {todayParticipants.map((name, idx) => (
-                  <div key={`${name}-${idx}`} className="bg-white/5 border border-white/10 rounded-2xl px-4 py-3 text-white">
-                    {name}
-                  </div>
-                ))}
-              </div>
-            ) : (
-              <div className="text-white/80">ยังไม่มีนักเรียนเข้าร่วมวันนี้</div>
-            ))}
           </div>
+
+          {todayOpen && (
+            <div className="absolute top-full right-0 mt-3 w-[360px] max-w-[calc(100vw-2rem)] bg-white/5 backdrop-blur-2xl rounded-3xl shadow-2xl p-4 border border-white/10">
+              <div className="text-white font-bold mb-2">รายชื่อนักเรียนที่เข้าร่วมวันนี้</div>
+
+              {todayParticipantsLoading ? (
+                <div className="text-white/80">กำลังโหลดรายชื่อ…</div>
+              ) : (Array.isArray(todayParticipants) && todayParticipants.length ? (
+                <div className="max-h-72 overflow-y-auto space-y-2 pr-1">
+                  {todayParticipants.map((name, idx) => (
+                    <div key={`${name}-${idx}`} className="bg-white/5 border border-white/10 rounded-2xl px-3 py-2 text-white">
+                      {name}
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="text-white/80">ยังไม่มีนักเรียนเข้าร่วมวันนี้</div>
+              ))}
+            </div>
+          )}
         </div>
-      )}
+      </div>
 
       {/* Create New Question Set Button */}
       <div className="relative z-10 mb-10">
