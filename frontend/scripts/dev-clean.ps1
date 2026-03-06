@@ -1,5 +1,6 @@
 param(
-  [int[]]$Ports = @(3000, 3001, 3002, 3003)
+  # Next.js will auto-shift ports when 3000 is busy (e.g., 3005).
+  [int[]]$Ports = @(3000..3010)
 )
 
 $ErrorActionPreference = 'Stop'

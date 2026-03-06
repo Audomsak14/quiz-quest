@@ -8,241 +8,17 @@ import { profileStorage } from "@/lib/profileStorage";
 function rectIntersect(x1, y1, w1, h1, x2, y2, w2, h2) {
   return x1 < x2 + w2 && x1 + w1 > x2 && y1 < y2 + h2 && y1 + h1 > y2;
 }
-
-function clamp(value, min, max) {
-  return Math.max(min, Math.min(max, value));
-}
-
-function buildSymmetricOffsets(count, gap, { includeCenter = true } = {}) {
+function buildSymmetricOffsets(count, gap) {
   if (count <= 0) return [];
-  const arr = includeCenter ? [0] : [];
-  let step = includeCenter ? 1 : 0;
+  const arr = [0];
+  let step = 1;
   while (arr.length < count) {
-    const distance = (step + 1) * gap;
-    arr.push(distance);
+    arr.push(step * gap);
     if (arr.length >= count) break;
-    arr.push(-distance);
+    arr.push(-step * gap);
     step++;
   }
   return arr;
-}
-
-function hashSeed(input) {
-  const text = String(input || 'quiz-quest');
-  let hash = 2166136261;
-  for (let i = 0; i < text.length; i++) {
-    hash ^= text.charCodeAt(i);
-    hash = Math.imul(hash, 16777619);
-  }
-  return hash >>> 0;
-}
-
-function seededRandomFactory(seedInput) {
-  let t = hashSeed(seedInput) || 1;
-  return () => {
-    t += 0x6D2B79F5;
-    let r = Math.imul(t ^ (t >>> 15), 1 | t);
-    r ^= r + Math.imul(r ^ (r >>> 7), 61 | r);
-    return ((r ^ (r >>> 14)) >>> 0) / 4294967296;
-  };
-}
-
-function shuffleArray(source = [], seedInput) {
-  const arr = [...source];
-  const random = seededRandomFactory(seedInput);
-  for (let i = arr.length - 1; i > 0; i--) {
-    const j = Math.floor(random() * (i + 1));
-    [arr[i], arr[j]] = [arr[j], arr[i]];
-  }
-  return arr;
-}
-
-function buildQuestionOffsets(count, gap, seedInput) {
-  if (count <= 0) return [];
-  const symmetric = buildSymmetricOffsets(count, gap, { includeCenter: false });
-  return shuffleArray(symmetric, seedInput).slice(0, count);
-}
-
-function buildStaticPlatforms(worldW, groundY) {
-  const defs = [
-    { ratio: 0.16, dy: 130, w: 260 },
-    { ratio: 0.33, dy: 210, w: 220 },
-    { ratio: 0.5, dy: 165, w: 260 },
-    { ratio: 0.67, dy: 220, w: 220 },
-    { ratio: 0.84, dy: 130, w: 260 },
-  ];
-
-  return defs.map((def, index) => {
-    const x = clamp(Math.round(worldW * def.ratio - def.w / 2), 120, worldW - def.w - 120);
-    return {
-      id: `pf-static-${index + 1}`,
-      x,
-      y: groundY - def.dy,
-      w: def.w,
-      h: 18,
-      kind: 'static',
-    };
-  });
-}
-
-function buildMovingPlatformDefs(worldW, groundY) {
-  const defs = [
-    { ratio: 0.27, dy: 265, w: 180, amplitude: 62, speed: 0.0018, phase: 0 },
-    { ratio: 0.73, dy: 285, w: 190, amplitude: 74, speed: 0.0015, phase: Math.PI },
-  ];
-
-  return defs.map((def, index) => {
-    const x = clamp(Math.round(worldW * def.ratio - def.w / 2), 140, worldW - def.w - 140);
-    return {
-      id: `pf-moving-${index + 1}`,
-      x,
-      baseY: groundY - def.dy,
-      w: def.w,
-      h: 18,
-      amplitude: def.amplitude,
-      speed: def.speed,
-      phase: def.phase,
-      kind: 'moving',
-    };
-  });
-}
-
-function getMovingPlatformsAtTime(defs = [], nowMs = 0) {
-  return defs.map((platform) => ({
-    ...platform,
-    y: Math.round(platform.baseY + Math.sin(nowMs * platform.speed + platform.phase) * platform.amplitude),
-  }));
-}
-
-function buildQuestionAnchors(worldW, groundY, staticPlatforms = []) {
-  const center = worldW / 2;
-  const groundOffsets = buildSymmetricOffsets(8, 280, { includeCenter: false });
-  const groundAnchors = groundOffsets
-    .map((off, index) => ({
-      id: `anchor-ground-${index + 1}`,
-      x: clamp(Math.round(center + off), 80, worldW - 80),
-      y: groundY - 40,
-    }));
-
-  const platformAnchors = staticPlatforms.map((platform, index) => ({
-    id: `anchor-platform-${index + 1}`,
-    x: Math.round(platform.x + platform.w / 2),
-    y: platform.y - 40,
-  }));
-
-  return [...platformAnchors, ...groundAnchors];
-}
-
-function buildQuestionSpotsFromAnchors(questions = [], anchors = [], worldW, seedInput) {
-  if (!questions.length) return [];
-  const fallbackAnchor = { x: worldW / 2, y: 540 };
-  const shuffledAnchors = anchors.length ? shuffleArray(anchors, `${seedInput}:anchors`) : [fallbackAnchor];
-
-  return questions.map((question, index) => {
-    const anchor = shuffledAnchors[index % shuffledAnchors.length] || fallbackAnchor;
-    const layer = Math.floor(index / shuffledAnchors.length);
-    const xShift = layer > 0 ? ((layer % 2 === 0 ? -1 : 1) * (42 * layer)) : 0;
-    const yShift = layer > 0 ? (18 * (layer % 3)) : 0;
-
-    return {
-      id: question.id,
-      x: clamp(Math.round(anchor.x + xShift), 70, worldW - 70),
-      y: clamp(Math.round(anchor.y - yShift), 120, 620),
-      question,
-    };
-  });
-}
-
-function normalizeNameKey(name) {
-  return String(name || '').trim().toLowerCase();
-}
-
-function normalizePlayerKey(value) {
-  return String(value || '').trim().toLowerCase();
-}
-
-function buildRoomProgress(roomPlayers = [], attempts = []) {
-  const activePlayers = roomPlayers
-    .map((player) => {
-      const idKey = normalizePlayerKey(player?.playerId);
-      const name = String(player?.name || '').trim();
-      const nameKey = normalizeNameKey(player?.name);
-      const canonicalKey = idKey || nameKey;
-      return { idKey, name, nameKey, canonicalKey };
-    })
-    .filter((player) => player.name && player.canonicalKey);
-
-  const canonicalPlayers = new Map();
-  const aliasToCanonical = new Map();
-  activePlayers.forEach((player) => {
-    if (!canonicalPlayers.has(player.canonicalKey)) {
-      canonicalPlayers.set(player.canonicalKey, player);
-    }
-    aliasToCanonical.set(player.canonicalKey, player.canonicalKey);
-    if (player.idKey) aliasToCanonical.set(player.idKey, player.canonicalKey);
-    if (player.nameKey) aliasToCanonical.set(player.nameKey, player.canonicalKey);
-  });
-
-  const bestByPlayer = new Map();
-  (attempts || []).forEach((attempt) => {
-    const idKey = normalizePlayerKey(attempt?.playerId);
-    const nameKey = normalizeNameKey(attempt?.playerName);
-    const key = (idKey && aliasToCanonical.get(idKey))
-      || (nameKey && aliasToCanonical.get(nameKey))
-      || '';
-    if (!key) return;
-
-    const next = {
-      name: String(attempt?.playerName || canonicalPlayers.get(key)?.name || 'ผู้เล่น'),
-      score: Number(attempt?.score || 0),
-      timestamp: attempt?.timestamp ? new Date(attempt.timestamp).getTime() : Number.POSITIVE_INFINITY,
-    };
-
-    const current = bestByPlayer.get(key);
-    if (!current || next.score > current.score || (next.score === current.score && next.timestamp < current.timestamp)) {
-      bestByPlayer.set(key, next);
-    }
-  });
-
-  const rows = Array.from(canonicalPlayers.values())
-    .map((player) => {
-      const best = bestByPlayer.get(player.canonicalKey);
-      return {
-        playerId: player.idKey || player.canonicalKey,
-        playerName: player.name,
-        finalScore: best ? best.score : 0,
-        done: Boolean(best),
-        timestamp: best ? best.timestamp : Number.POSITIVE_INFINITY,
-      };
-    })
-    .sort((a, b) => {
-      if (a.done !== b.done) return a.done ? -1 : 1;
-      if (b.finalScore !== a.finalScore) return b.finalScore - a.finalScore;
-      if (a.timestamp !== b.timestamp) return a.timestamp - b.timestamp;
-      return a.playerName.localeCompare(b.playerName, 'th');
-    });
-
-  const completedPlayers = rows.filter((row) => row.done).length;
-  const totalPlayers = rows.length;
-  const allDone = totalPlayers > 0 && completedPlayers >= totalPlayers;
-
-  const rankings = rows
-    .filter((row) => row.done)
-    .sort((a, b) => {
-      if (b.finalScore !== a.finalScore) return b.finalScore - a.finalScore;
-      if (a.timestamp !== b.timestamp) return a.timestamp - b.timestamp;
-      return a.playerName.localeCompare(b.playerName, 'th');
-    })
-    .map((row, index) => ({
-      rank: index + 1,
-      playerId: row.playerId,
-      playerName: row.playerName,
-      finalScore: row.finalScore,
-      completionTime: Number.isFinite(row.timestamp) ? row.timestamp : null,
-      questionsAnswered: null,
-    }));
-
-  return { rows, totalPlayers, completedPlayers, allDone, rankings };
 }
 
 // A simple side-scrolling quiz game
@@ -263,9 +39,81 @@ export default function SideScrollerQuiz() {
   }, []);
 
   const [roomId] = useState(() => searchParams.get("roomId") || "");
-  const [playerName] = useState(() => searchParams.get("playerName") || `Player_${Math.floor(Math.random()*1000)}`);
+  const [playerName] = useState(() => {
+    const authUsername = (() => {
+      if (typeof window === 'undefined') return '';
+      try { return sessionStorage.getItem('username') || localStorage.getItem('username') || ''; } catch { return ''; }
+    })();
+    if (authUsername) {
+      try { profileStorage.setName(authUsername); } catch {}
+      return authUsername;
+    }
+
+    const fromUrl = searchParams.get('playerName');
+    if (fromUrl) {
+      try { profileStorage.setName(fromUrl); } catch {}
+      return fromUrl;
+    }
+
+    const stored = (() => {
+      try { return profileStorage.getName(); } catch { return ''; }
+    })();
+    if (stored) return stored;
+
+    const generated = `Player_${Math.floor(Math.random() * 1000)}`;
+    try { profileStorage.setName(generated); } catch {}
+    return generated;
+  });
   const [providedPlayerId] = useState(() => searchParams.get("playerId") || profileStorage.ensureId(playerName) || null);
   const role = "student";
+  const [roomPlayerId, setRoomPlayerId] = useState(() => {
+    if (typeof window === 'undefined') return null;
+    try { return window.sessionStorage.getItem(`qq:roomPlayerId:${roomId}:${playerName}`) || null; } catch { return null; }
+  });
+
+  // Ensure the student appears in the teacher view even when Socket.IO isn't running.
+  useEffect(() => {
+    if (!roomId || !playerName) return;
+    let cancelled = false;
+    const join = async () => {
+      try {
+        const res = await fetch(`http://localhost:5000/api/rooms/${roomId}/join`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name: playerName }),
+        });
+        if (cancelled) return;
+        const data = await res.json().catch(() => null);
+        if (cancelled) return;
+
+        // On success: store the DB roomPlayer id.
+        if (res.ok && data?.success && data?.player?.id) {
+          const pid = String(data.player.id);
+          setRoomPlayerId(pid);
+          try { window.sessionStorage.setItem(`qq:roomPlayerId:${roomId}:${playerName}`, pid); } catch {}
+          return;
+        }
+
+        // On duplicate-name (409): resolve playerId by reading the current room roster.
+        if (res.status === 409) {
+          try {
+            const rr = await fetch(`http://localhost:5000/api/game/room/${roomId}`);
+            const rd = await rr.json().catch(() => null);
+            const list = Array.isArray(rd?.room?.players) ? rd.room.players : [];
+            const target = list.find((p) => (String(p?.name || '').trim().toLowerCase() === String(playerName).trim().toLowerCase()));
+            if (target?.playerId) {
+              const pid = String(target.playerId);
+              setRoomPlayerId(pid);
+              try { window.sessionStorage.setItem(`qq:roomPlayerId:${roomId}:${playerName}`, pid); } catch {}
+            }
+          } catch {}
+          return;
+        }
+      } catch {}
+    };
+    join();
+    return () => { cancelled = true; };
+  }, [roomId, playerName]);
 
   // Canvas/world
   const VIEW_W = 1400; // enlarged from 1200 for a wider play area
@@ -311,21 +159,64 @@ export default function SideScrollerQuiz() {
   const [currentQuestion, setCurrentQuestion] = useState(null);
   const [showQuestion, setShowQuestion] = useState(false);
   const [playerProgress, setPlayerProgress] = useState({ answered: [], score: 0 });
+
+  // Per-question timer (seconds) from question set
+  const [timePerQuestion, setTimePerQuestion] = useState(30);
+  const [timeLeft, setTimeLeft] = useState(null);
+  const [timeUp, setTimeUp] = useState(false);
+  const timeUpHandledRef = useRef(false);
+  const timeUpTimeoutRef = useRef(null);
+
+  // REST fallback for spectator mode: periodically publish our live position.
+  useEffect(() => {
+    if (!roomId || !playerName) return;
+    if (!roomPlayerId) return;
+
+    let cancelled = false;
+    let lastSentAt = 0;
+
+    const tick = async () => {
+      const now = Date.now();
+      if (now - lastSentAt < 90) return;
+      lastSentAt = now;
+      try {
+        const pos = posRef.current;
+        const payload = {
+          roomId,
+          playerId: roomPlayerId,
+          playerName,
+          x: pos?.x ?? 0,
+          y: pos?.y ?? 0,
+          score: playerProgress?.score ?? 0,
+          answered: playerProgress?.answered?.length ?? 0,
+          mode: 'side',
+          ts: now,
+        };
+        await fetch('http://localhost:5000/api/game/state', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+      } catch {}
+    };
+
+    const timer = setInterval(() => {
+      if (!cancelled) tick();
+    }, 120);
+    tick();
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
+  }, [roomId, playerName, roomPlayerId, playerProgress?.score, playerProgress?.answered?.length]);
   // Track per-question answer status: { [questionId]: 'correct' | 'wrong' }
   const [answeredStatus, setAnsweredStatus] = useState({});
   const [answeredByPlayer, setAnsweredByPlayer] = useState({});
   const [blocks, setBlocks] = useState([]);
   const [platforms, setPlatforms] = useState([]);
-  const movingPlatformsRef = useRef([]);
   const [gameResults, setGameResults] = useState(null);
   const [showRankings, setShowRankings] = useState(false);
-  const [gameCompleted, setGameCompleted] = useState(false);
-  const [localResults, setLocalResults] = useState(null);
-  const [waitingBoard, setWaitingBoard] = useState({ rows: [], totalPlayers: 0, completedPlayers: 0 });
-  const [isTouchDevice, setIsTouchDevice] = useState(false);
-  const [allPlayersFinished, setAllPlayersFinished] = useState(false);
   const completedOnceRef = useRef(false);
-  const completionSavedRef = useRef(false);
   const [uiTick, setUiTick] = useState(0);
   const lastQuestionOpenAtRef = useRef(0);
   const avatarRef = useRef(null);
@@ -362,32 +253,9 @@ export default function SideScrollerQuiz() {
   // Ensure no buffered jump from overlays
   useEffect(() => {
     const inp = inputsRef.current;
-    inp.left = false;
-    inp.right = false;
     inp.jumpPressed = false;
     inp.jumpHeld = false;
   }, [showQuestion, showRankings]);
-
-  const setLeftPressed = useCallback((pressed) => {
-    inputsRef.current.left = pressed;
-  }, []);
-
-  const setRightPressed = useCallback((pressed) => {
-    inputsRef.current.right = pressed;
-  }, []);
-
-  const setJumpPressed = useCallback((pressed) => {
-    const inp = inputsRef.current;
-    if (pressed) {
-      if (!inp.jumpHeld) {
-        inp.jumpPressed = true;
-        inp.jumpPressedAt = performance.now();
-      }
-      inp.jumpHeld = true;
-      return;
-    }
-    inp.jumpHeld = false;
-  }, []);
 
   // Redirect helper
   const redirectToLobby = useCallback(() => {
@@ -395,111 +263,121 @@ export default function SideScrollerQuiz() {
     try { window.location.replace("/StudentDashboard/gameroom"); } catch { window.location.href = "/StudentDashboard/gameroom"; }
   }, [roomId]);
 
-  // Poll room completion while waiting for every player to finish
-  useEffect(() => {
-    if (!gameCompleted || allPlayersFinished || !roomId) return;
-
-    let cancelled = false;
-
-    const loadProgress = async () => {
-      try {
-        const [roomResponse, historyResponse] = await Promise.all([
-          fetch(`http://localhost:5000/api/game/room/${roomId}`, { cache: 'no-store' }),
-          fetch(`http://localhost:5000/api/game/history?roomId=${roomId}&limit=500`, { cache: 'no-store' }),
-        ]);
-
-        if (!roomResponse.ok || !historyResponse.ok) return;
-
-        const roomPayload = await roomResponse.json();
-        const historyPayload = await historyResponse.json();
-        const roomPlayers = Array.isArray(roomPayload?.room?.players) ? roomPayload.room.players : [];
-        const attempts = Array.isArray(historyPayload?.attempts) ? historyPayload.attempts : [];
-
-        const progress = buildRoomProgress(roomPlayers, attempts);
-
-        if (cancelled) return;
-
-        setWaitingBoard({
-          rows: progress.rows,
-          totalPlayers: progress.totalPlayers,
-          completedPlayers: progress.completedPlayers,
-        });
-
-        if (progress.allDone) {
-          setAllPlayersFinished(true);
-          setLocalResults({ roomId, rankings: progress.rankings });
-        }
-      } catch {
-        // ignore polling errors and keep waiting state
-      }
-    };
-
-    loadProgress();
-    const timerId = setInterval(loadProgress, 2000);
-
-    return () => {
-      cancelled = true;
-      clearInterval(timerId);
-    };
-  }, [gameCompleted, allPlayersFinished, roomId]);
-
-  // Load questions and build world/layout
+  // Load questions and build world/platforms symmetrically
   useEffect(() => {
     const load = async () => {
       if (!roomId) return;
       try {
         const r = await fetch(`http://localhost:5000/api/game/questions/${roomId}`);
         const data = await r.json();
+
+        const tl = Number(data?.timeLimit);
+        if (Number.isFinite(tl) && tl > 0) setTimePerQuestion(Math.max(1, Math.floor(tl)));
+
         const qArr = Array.isArray(data?.questions) ? data.questions : (Array.isArray(data) ? data : []);
-        const questionList = qArr.length
-          ? qArr
-          : Array.from({ length: 4 }).map((_, i) => ({ id: `q${i + 1}`, text: `Q${i + 1}`, choices: ["A", "B", "C", "D"], answerIndex: i % 4, points: 100 }));
-        const count = questionList.length;
+        const count = qArr.length || 4;
         const GAP = 320; const LEFT_PAD = 800; const RIGHT_PAD = 800;
         const minWorld = 3600;
         const needed = count > 1 ? (count - 1) * GAP : 0;
         const newWorldW = Math.max(minWorld, LEFT_PAD + RIGHT_PAD + needed + VIEW_W);
         setWorldW(newWorldW);
 
-        const staticPlatforms = buildStaticPlatforms(newWorldW, GROUND_Y);
-        const movingDefs = buildMovingPlatformDefs(newWorldW, GROUND_Y);
-        const normalizedQuestions = questionList.map((q, index) => ({
-          id: q.id || `q${index + 1}`,
-          text: q.text,
-          choices: q.choices,
-          answerIndex: q.answerIndex,
-          points: q.points || 100,
-        }));
-        const anchors = buildQuestionAnchors(newWorldW, GROUND_Y, staticPlatforms);
-        const questionSpots = buildQuestionSpotsFromAnchors(normalizedQuestions, anchors, newWorldW, `${roomId}:questions`);
+        const offsets = buildSymmetricOffsets(count, GAP);
+        const center = newWorldW / 2;
 
-        setPlatforms(staticPlatforms);
-        movingPlatformsRef.current = movingDefs;
-        setQuestionSpots(questionSpots);
+        const localPlatforms = [];
+        const platLevels = [
+          { dy: 120, w: 260 },
+          // Lower the higher platform slightly to make it reachable
+          { dy: 150, w: 220 },
+        ];
+
+        const qs = (qArr.length ? qArr : Array.from({ length: count }).map((_, i) => ({ id: `q${i+1}`, text: `Q${i+1}`, choices: ["A","B","C","D"], answerIndex: i % 4, points: 100 })))
+          .map((q, i) => {
+            const off = offsets[i] || 0;
+            const level = i % 3; // 0 ground, 1/2 platforms
+            let y = GROUND_Y - 40;
+            if (level === 1 || level === 2) {
+              const lvl = platLevels[level - 1];
+              const w = lvl.w; const px = center + off - w / 2; const py = GROUND_Y - lvl.dy;
+              localPlatforms.push({ x: px, y: py, w, h: 18 });
+              y = py - 40;
+            }
+            return {
+              id: q.id,
+              x: center + off,
+              y,
+              question: { id: q.id, text: q.text, choices: q.choices, answerIndex: q.answerIndex, points: q.points || 100 }
+            };
+          });
+
+        setPlatforms(localPlatforms);
+        setQuestionSpots(qs);
       } catch (e) {
         const count = 4; const GAP = 320; const LEFT_PAD = 800; const RIGHT_PAD = 800;
         const newWorldW = Math.max(3600, LEFT_PAD + RIGHT_PAD + (count - 1) * GAP + VIEW_W);
         setWorldW(newWorldW);
-
-        const staticPlatforms = buildStaticPlatforms(newWorldW, GROUND_Y);
-        const movingDefs = buildMovingPlatformDefs(newWorldW, GROUND_Y);
-        const fallbackQuestions = Array.from({ length: count }).map((_, i) => ({
-          id: `q${i + 1}`,
-          text: `คำถามตัวอย่าง ${i + 1}`,
-          choices: ["A", "B", "C", "D"],
-          answerIndex: i % 4,
-          points: 100,
+        const center = newWorldW / 2;
+        const offsets = buildSymmetricOffsets(count, GAP);
+        const localPlatforms = [];
+        setQuestionSpots(offsets.map((off, i) => {
+          const usePlat = i % 3 !== 0;
+          let y = GROUND_Y - 40;
+          if (usePlat) {
+            // Mirror lowered platform height in fallback as well (170 -> 150)
+            const dy = i % 2 ? 120 : 150; const w = i % 2 ? 260 : 220; const px = center + off - w / 2; const py = GROUND_Y - dy;
+            localPlatforms.push({ x: px, y: py, w, h: 18 }); y = py - 40;
+          }
+          return ({ id: `q${i+1}`, x: center + off, y, question: { id: `q${i+1}`, text: `คำถามตัวอย่าง ${i+1}`, choices: ["A","B","C","D"], answerIndex: i % 4, points: 100 } });
         }));
-        const anchors = buildQuestionAnchors(newWorldW, GROUND_Y, staticPlatforms);
-        const questionSpots = buildQuestionSpotsFromAnchors(fallbackQuestions, anchors, newWorldW, `${roomId || 'fallback'}:questions`);
-
-        setPlatforms(staticPlatforms);
-        movingPlatformsRef.current = movingDefs;
-        setQuestionSpots(questionSpots);
+        setPlatforms(localPlatforms);
       }
     };
     load();
   }, [roomId]);
+
+  // Question countdown timer: starts when the question modal opens.
+  useEffect(() => {
+    if (!showQuestion || !currentQuestion) {
+      setTimeLeft(null);
+      setTimeUp(false);
+      timeUpHandledRef.current = false;
+      if (timeUpTimeoutRef.current) {
+        clearTimeout(timeUpTimeoutRef.current);
+        timeUpTimeoutRef.current = null;
+      }
+      return;
+    }
+
+    const durationSec = Math.max(1, Math.floor(Number(timePerQuestion) || 30));
+    const deadline = Date.now() + durationSec * 1000;
+    setTimeUp(false);
+    timeUpHandledRef.current = false;
+    setTimeLeft(durationSec);
+
+    const iv = setInterval(() => {
+      const remainMs = deadline - Date.now();
+      const secs = Math.max(0, Math.ceil(remainMs / 1000));
+      setTimeLeft(secs);
+
+      if (secs <= 0 && !timeUpHandledRef.current) {
+        timeUpHandledRef.current = true;
+        setTimeUp(true);
+        // Small delay so user sees the red state.
+        timeUpTimeoutRef.current = setTimeout(() => {
+          try { answerQuestion(-1, { timedOut: true }); } catch {}
+        }, 900);
+      }
+    }, 200);
+
+    return () => {
+      clearInterval(iv);
+      if (timeUpTimeoutRef.current) {
+        clearTimeout(timeUpTimeoutRef.current);
+        timeUpTimeoutRef.current = null;
+      }
+    };
+  }, [showQuestion, currentQuestion, timePerQuestion]);
 
   // Rebuild visual blocks
   useEffect(() => {
@@ -565,21 +443,6 @@ export default function SideScrollerQuiz() {
   useEffect(() => {
     const t = setInterval(() => setUiTick(v => v + 1), 150);
     return () => clearInterval(t);
-  }, []);
-
-  useEffect(() => {
-    if (typeof window === 'undefined') return;
-    const mediaQuery = window.matchMedia('(pointer: coarse)');
-    const update = () => {
-      setIsTouchDevice(Boolean(mediaQuery.matches || navigator.maxTouchPoints > 0));
-    };
-    update();
-    mediaQuery.addEventListener?.('change', update);
-    window.addEventListener('resize', update);
-    return () => {
-      mediaQuery.removeEventListener?.('change', update);
-      window.removeEventListener('resize', update);
-    };
   }, []);
 
   // Sockets
@@ -667,12 +530,28 @@ export default function SideScrollerQuiz() {
   useEffect(() => {
     let timer;
     let cancelled = false;
+    const confirmedInRosterRef = { current: false };
     const check = async () => {
       try {
         if (!roomId) return;
         const r = await fetch(`http://localhost:5000/api/game/room/${roomId}`);
         const data = await r.json();
         const status = data?.room?.status || data?.status;
+        // If we are no longer present in the room roster, treat as kicked.
+        const roster = Array.isArray(data?.room?.players) ? data.room.players : [];
+        const stillHere = roomPlayerId ? roster.some((p) => String(p?.playerId) === String(roomPlayerId)) : true;
+
+        // Only treat as kicked after we've seen ourselves in roster at least once.
+        if (roomPlayerId && stillHere) {
+          confirmedInRosterRef.current = true;
+        }
+
+        if (!cancelled && roomPlayerId && confirmedInRosterRef.current && !stillHere) {
+          try { window.sessionStorage.setItem(`qq:kicked:${roomId}`, '1'); } catch {}
+          try { window.location.replace('/StudentDashboard/gameroom'); } catch { window.location.href = '/StudentDashboard/gameroom'; }
+          return;
+        }
+
         if (!cancelled && status && status !== 'active') {
           try { window.sessionStorage.setItem(`qq:kicked:${roomId}`, '1'); } catch {}
           try { window.location.replace('/StudentDashboard/gameroom'); } catch { window.location.href = '/StudentDashboard/gameroom'; }
@@ -682,7 +561,7 @@ export default function SideScrollerQuiz() {
     timer = setInterval(check, 1500);
     check();
     return () => { cancelled = true; clearInterval(timer); };
-  }, [roomId]);
+  }, [roomId, roomPlayerId]);
 
   // Input handlers
   useEffect(() => {
@@ -793,9 +672,7 @@ export default function SideScrollerQuiz() {
   if (pos.y + 40 >= GROUND_Y && vel.y >= 0) { pos.y = GROUND_Y - 40; vel.y = 0; if (!wasGrounded) lastLandingAtRef.current = now; footOnSurface = true; supportTypeRef.current = 'ground'; supportYRef.current = GROUND_Y; }
 
         // platforms collide (solid both ways) with inclusive top-touch detection and resting support to prevent micro-bounce
-          const animatedPlatforms = getMovingPlatformsAtTime(movingPlatformsRef.current, now);
-          const activePlatforms = [...platforms, ...animatedPlatforms];
-          for (const pf of activePlatforms) {
+        for (const pf of platforms) {
           // Horizontal overlap between player (width 40) and platform
           const playerLeft = pos.x - 20, playerRight = pos.x + 20;
           const platLeft = pf.x, platRight = pf.x + pf.w;
@@ -1047,17 +924,7 @@ export default function SideScrollerQuiz() {
       }
 
       // platforms
-      ctx.fillStyle = "#8b5cf6";
-      platforms.forEach(p => { ctx.fillRect(p.x - cam, p.y, p.w, p.h); });
-
-      const animatedPlatforms = getMovingPlatformsAtTime(movingPlatformsRef.current, performance.now());
-      ctx.fillStyle = "#06b6d4";
-      animatedPlatforms.forEach(p => {
-        ctx.fillRect(p.x - cam, p.y, p.w, p.h);
-        ctx.strokeStyle = "rgba(255,255,255,0.65)";
-        ctx.lineWidth = 2;
-        ctx.strokeRect(p.x - cam, p.y, p.w, p.h);
-      });
+      ctx.fillStyle = "#8b5cf6"; platforms.forEach(p => { ctx.fillRect(p.x - cam, p.y, p.w, p.h); });
 
       // question blocks (always visible). Color reflects answer status per block.
       blocks.forEach(b => {
@@ -1427,92 +1294,74 @@ export default function SideScrollerQuiz() {
   }, [VIEW_W, VIEW_H, worldW, GROUND_Y, GROUND_H, platforms, isConnected, questionSpots, playerProgress.answered, showQuestion, gameStarted, playerName]);
 
   // Answer selection
-  const answerQuestion = useCallback((idx) => {
+  const submitCompletion = useCallback(async ({ finalScore, elapsedMs, answeredCount }) => {
+    const playerId = socketManager.getPlayerId() || providedPlayerId || null;
+    const fallback = {
+      roomId,
+      rankings: [
+        {
+          rank: 1,
+          playerId,
+          playerName,
+          finalScore,
+          completionTime: elapsedMs,
+          timestamp: Date.now(),
+        },
+      ],
+    };
+
+    try {
+      const res = await fetch('http://localhost:5000/api/game/complete', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          roomId,
+          playerId,
+          playerName,
+          finalScore,
+          completionTime: elapsedMs,
+          questionsAnswered: answeredCount,
+        }),
+      });
+
+      const data = await res.json().catch(() => null);
+      if (res.ok && data?.success && data?.rankings) {
+        setGameResults(data);
+        setShowRankings(true);
+        return;
+      }
+    } catch {}
+
+    // Fallback (single-player result) when backend isn't available
+    setGameResults(fallback);
+    setShowRankings(true);
+  }, [roomId, playerName, providedPlayerId]);
+
+  const answerQuestion = useCallback((idx, opts = {}) => {
     if (!currentQuestion) return;
+    if (timeUp && !opts?.timedOut) return;
     const qid = currentQuestion.id;
     // guard: if already answered, ignore
     if (answeredStatus[qid]) { setShowQuestion(false); setCurrentQuestion(null); return; }
-    const correct = idx === currentQuestion.answerIndex; const earned = correct ? (currentQuestion.points ?? 100) : 0;
+    const timedOut = Boolean(opts?.timedOut) || !Number.isFinite(idx) || idx < 0;
+    const correct = (!timedOut) && (idx === currentQuestion.answerIndex);
+    const earned = correct ? (currentQuestion.points ?? 100) : 0;
     setAnsweredStatus(prev => ({ ...prev, [qid]: correct ? 'correct' : 'wrong' }));
     setPlayerProgress(prev => ({ answered: [...prev.answered, qid], score: prev.score + earned }));
     setShowQuestion(false); setCurrentQuestion(null);
     const total = questionSpots.length; const answeredCount = playerProgress.answered.length + 1;
     if (answeredCount >= total && !completedOnceRef.current) {
       completedOnceRef.current = true;
-      const elapsed = gameStartTime ? Date.now() - gameStartTime : undefined;
-      const finalScore = playerProgress.score + earned;
-      const finalPlayerId = socketManager.getPlayerId() || providedPlayerId || playerName;
-      setGameCompleted(true);
-      setShowRankings(true);
+      const elapsedMs = gameStartTime ? Math.max(0, Date.now() - gameStartTime) : 0;
+      const finalScore = (playerProgress.score + earned);
 
-      const activePlayersNow = 1 + Object.keys(otherPlayers || {}).length;
-      if (activePlayersNow <= 1) {
-        setWaitingBoard({
-          rows: [{
-            playerId: normalizePlayerKey(finalPlayerId),
-            playerName,
-            finalScore,
-            done: true,
-            timestamp: Date.now(),
-          }],
-          totalPlayers: 1,
-          completedPlayers: 1,
-        });
-        setAllPlayersFinished(true);
-        setLocalResults({
-          roomId,
-          rankings: [{
-            rank: 1,
-            playerId: normalizePlayerKey(finalPlayerId),
-            playerName,
-            finalScore,
-            completionTime: Date.now(),
-            questionsAnswered: answeredCount,
-          }],
-        });
-      }
-
-      const saveCompletion = async () => {
-        if (completionSavedRef.current) return;
-        completionSavedRef.current = true;
-
-        try {
-          await fetch('http://localhost:5000/api/game/history', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              roomId,
-              playerId: finalPlayerId,
-              playerName,
-              score: finalScore,
-            }),
-          });
-        } catch {}
-      };
-
-      saveCompletion();
-
-      if (isConnected) {
-        socketManager.completeGame(finalScore, elapsed, answeredCount);
+      // Try socket path (if there is a socket.io server). If not, fall back to REST.
+      const sent = socketManager.completeGame(finalScore, elapsedMs, answeredCount);
+      if (!sent) {
+        void submitCompletion({ finalScore, elapsedMs, answeredCount });
       }
     }
-  }, [
-    currentQuestion,
-    answeredStatus,
-    playerProgress,
-    questionSpots.length,
-    gameStartTime,
-    isConnected,
-    roomId,
-    playerName,
-    providedPlayerId,
-    otherPlayers,
-  ]);
-
-  const getScoreValue = useCallback((row) => {
-    const value = Number(row?.finalScore ?? row?.score ?? 0);
-    return Number.isFinite(value) ? value : 0;
-  }, []);
+  }, [currentQuestion, answeredStatus, playerProgress, questionSpots.length, gameStartTime, submitCompletion, timeUp]);
 
   // HUD + Canvas + Modals
   return (
@@ -1580,64 +1429,36 @@ export default function SideScrollerQuiz() {
         </div>
       </div>
 
-      {!showQuestion && !showRankings && isTouchDevice && (
-        <div className="fixed bottom-3 left-0 right-0 z-40 px-4" style={{ touchAction: 'none' }}>
-          <div className="mx-auto max-w-md rounded-3xl border border-white/45 bg-white/20 backdrop-blur-md shadow-2xl px-3 py-2 flex items-end justify-between">
-            <div className="flex items-center gap-2">
-              <button
-                type="button"
-                aria-label="เดินซ้าย"
-                onPointerDown={(e) => { e.preventDefault(); setLeftPressed(true); }}
-                onPointerUp={(e) => { e.preventDefault(); setLeftPressed(false); }}
-                onPointerCancel={() => setLeftPressed(false)}
-                onPointerLeave={() => setLeftPressed(false)}
-                onContextMenu={(e) => e.preventDefault()}
-                className="group relative w-16 h-16 rounded-2xl bg-gradient-to-b from-slate-700/95 to-slate-900/95 text-white text-2xl font-black border border-white/35 shadow-[0_8px_24px_rgba(15,23,42,0.45)] active:scale-95 active:shadow-[0_4px_12px_rgba(15,23,42,0.5)] transition-all"
-              >
-                <span className="absolute inset-0 rounded-2xl bg-white/10 opacity-0 group-active:opacity-100 transition-opacity" />
-                <span className="relative">←</span>
-              </button>
-              <button
-                type="button"
-                aria-label="เดินขวา"
-                onPointerDown={(e) => { e.preventDefault(); setRightPressed(true); }}
-                onPointerUp={(e) => { e.preventDefault(); setRightPressed(false); }}
-                onPointerCancel={() => setRightPressed(false)}
-                onPointerLeave={() => setRightPressed(false)}
-                onContextMenu={(e) => e.preventDefault()}
-                className="group relative w-16 h-16 rounded-2xl bg-gradient-to-b from-slate-700/95 to-slate-900/95 text-white text-2xl font-black border border-white/35 shadow-[0_8px_24px_rgba(15,23,42,0.45)] active:scale-95 active:shadow-[0_4px_12px_rgba(15,23,42,0.5)] transition-all"
-              >
-                <span className="absolute inset-0 rounded-2xl bg-white/10 opacity-0 group-active:opacity-100 transition-opacity" />
-                <span className="relative">→</span>
-              </button>
-            </div>
-
-            <button
-              type="button"
-              aria-label="กระโดด"
-              onPointerDown={(e) => { e.preventDefault(); setJumpPressed(true); }}
-              onPointerUp={(e) => { e.preventDefault(); setJumpPressed(false); }}
-              onPointerCancel={() => setJumpPressed(false)}
-              onPointerLeave={() => setJumpPressed(false)}
-              onContextMenu={(e) => e.preventDefault()}
-              className="group relative w-20 h-20 rounded-full bg-gradient-to-b from-fuchsia-500 to-indigo-600 text-white text-xs font-black tracking-wide border-2 border-white/50 shadow-[0_12px_30px_rgba(79,70,229,0.55)] active:scale-95 active:shadow-[0_6px_16px_rgba(79,70,229,0.6)] transition-all"
-            >
-              <span className="absolute inset-0 rounded-full bg-white/10 opacity-0 group-active:opacity-100 transition-opacity" />
-              <span className="relative">⤴ JUMP</span>
-            </button>
-          </div>
-        </div>
-      )}
-
       {!gameStarted && (<div className="mt-4 text-center text-amber-700 bg-amber-100 border border-amber-300 px-4 py-2 rounded-xl">รอครูเริ่มเกมอยู่...</div>)}
 
       {showQuestion && currentQuestion && (
         <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50">
           <div className="bg-white rounded-2xl shadow-2xl p-6 max-w-2xl w-[90%] border border-gray-200">
-            <div className="text-xl font-extrabold text-gray-900 mb-4 leading-snug">{currentQuestion.text}</div>
+            <div className="flex items-start justify-between gap-3 mb-3">
+              <div className="text-xl font-extrabold text-gray-900 leading-snug">{currentQuestion.text}</div>
+              <div className={`shrink-0 px-3 py-1 rounded-xl text-sm font-extrabold border ${timeUp ? 'bg-rose-100 text-rose-700 border-rose-200' : 'bg-indigo-50 text-indigo-700 border-indigo-200'}`}>
+                ⏱️ {typeof timeLeft === 'number' ? timeLeft : Math.max(1, Math.floor(Number(timePerQuestion) || 30))}s
+              </div>
+            </div>
+
+            {timeUp && (
+              <div className="mb-3 text-sm font-bold text-rose-700 bg-rose-50 border border-rose-200 rounded-xl px-3 py-2">
+                หมดเวลา! ข้อนี้นับว่าตอบผิด
+              </div>
+            )}
+
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               {currentQuestion.choices.map((c, i) => (
-                <button key={i} onClick={() => answerQuestion(i)} className="p-4 rounded-2xl border-2 border-gray-200 bg-white text-gray-900 text-left font-semibold shadow-sm hover:bg-indigo-50 hover:border-indigo-200 focus:outline-none focus:ring-2 focus:ring-indigo-300">
+                <button
+                  key={i}
+                  onClick={() => answerQuestion(i)}
+                  disabled={timeUp}
+                  className={`p-4 rounded-2xl border-2 text-left font-semibold shadow-sm focus:outline-none focus:ring-2 ${
+                    timeUp
+                      ? 'border-rose-300 bg-rose-50 text-rose-900 focus:ring-rose-200 cursor-not-allowed'
+                      : 'border-gray-200 bg-white text-gray-900 hover:bg-indigo-50 hover:border-indigo-200 focus:ring-indigo-300'
+                  }`}
+                >
                   <span className="inline-block w-6 h-6 mr-2 rounded-md bg-indigo-600 text-white text-center font-bold align-middle">{String.fromCharCode(65+i)}</span>
                   <span className="align-middle">{c}</span>
                 </button>
@@ -1650,48 +1471,46 @@ export default function SideScrollerQuiz() {
         </div>
       )}
 
-      {showRankings && gameCompleted && (
+      {showRankings && gameResults && (
         <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-[60]">
           <div className="bg-white rounded-2xl shadow-2xl p-6 max-w-2xl w-[92%] border border-gray-200">
-            {(() => {
-              const rankingSource = localResults || gameResults;
-              const waitingRows = waitingBoard.rows || [];
-              return (
-              <>
             <div className="mb-4">
-              <div className="text-2xl font-extrabold text-gray-900">{allPlayersFinished ? '🏆 อันดับคะแนนสุดท้าย' : '📋 บอร์ดคะแนน (รอผู้เล่นครบ)'}</div>
-              <div className="text-sm text-gray-600">ห้อง {roomId}</div>
-              {!allPlayersFinished && (
-                <div className="mt-1 text-sm text-amber-700">
-                  รอผู้เล่นตอบครบทุกข้อ: {waitingBoard.completedPlayers}/{waitingBoard.totalPlayers} คน
-                </div>
-              )}
+              <div className="text-2xl font-extrabold text-gray-900">🏆 อันดับคะแนน</div>
+              <div className="text-sm text-gray-600">ห้อง {gameResults?.roomId}</div>
             </div>
             <div className="space-y-2 max-h-[55vh] overflow-y-auto pr-1">
-              {(allPlayersFinished ? (rankingSource?.rankings || []) : waitingRows).map((r, i) => {
-                const pid = r.playerId || normalizeNameKey(r.playerName);
-                const isMe = normalizeNameKey(r.playerName) === normalizeNameKey(playerName) || pid === socketManager.getPlayerId();
-                const displayRank = allPlayersFinished ? (r.rank <= 3 ? ['1','2','3'][r.rank - 1] : r.rank) : (i + 1);
+              {(gameResults.rankings || []).map((r, i) => {
+                const isMe = r.playerId === socketManager.getPlayerId();
+                const secs = Number.isFinite(r?.completionTime) ? (r.completionTime/1000).toFixed(1) : '—';
                 return (
                   <div key={`${r.playerId}-${i}`} className={`p-3 rounded-xl border ${isMe ? 'bg-indigo-50 border-indigo-200' : 'bg-gray-50 border-gray-200'} flex items-center justify-between`}>
                     <div className="flex items-center gap-3">
-                      <div className="w-8 h-8 rounded-full bg-yellow-400 text-white font-bold flex items-center justify-center">{displayRank}</div>
+                      <div className="w-8 h-8 rounded-full bg-yellow-400 text-white font-bold flex items-center justify-center">{r.rank <= 3 ? ['1','2','3'][r.rank-1] : r.rank}</div>
                       <div>
                         <div className="font-bold text-gray-800">{r.playerName}</div>
-                        <div className="text-xs text-gray-600">{allPlayersFinished ? 'ตอบครบแล้ว' : (r.done ? 'ตอบครบแล้ว' : 'กำลังทำแบบทดสอบ')}</div>
+                        <div className="text-xs text-gray-600">ใช้เวลา: {secs} วินาที</div>
                       </div>
                     </div>
-                    <div className="text-lg font-extrabold text-emerald-700">{getScoreValue(r)} คะแนน</div>
+                    <div className="text-lg font-extrabold text-emerald-700">{r.finalScore} คะแนน</div>
                   </div>
                 );
               })}
             </div>
             <div className="mt-5 flex items-center justify-end gap-2">
-              <button onClick={() => router.push('/StudentDashboard/gameroom')} className="px-4 py-2 rounded-xl bg-indigo-600 text-white hover:bg-indigo-700 shadow focus:outline-none focus:ring-2 focus:ring-indigo-300">กลับหน้าห้อง</button>
+              <button
+                onClick={async () => {
+                  try {
+                    if (roomId && roomPlayerId) {
+                      await fetch(`http://localhost:5000/api/rooms/${roomId}/leave/${roomPlayerId}`, { method: 'POST' });
+                    }
+                  } catch {}
+                  try { window.sessionStorage.removeItem(`qq:roomPlayerId:${roomId}:${playerName}`); } catch {}
+                  try { setRoomPlayerId(null); } catch {}
+                  router.push('/StudentDashboard/gameroom');
+                }}
+                className="px-4 py-2 rounded-xl bg-indigo-600 text-white hover:bg-indigo-700 shadow focus:outline-none focus:ring-2 focus:ring-indigo-300"
+              >กลับหน้าห้อง</button>
             </div>
-              </>
-              );
-            })()}
           </div>
         </div>
       )}

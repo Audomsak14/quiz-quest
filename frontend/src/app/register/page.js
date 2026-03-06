@@ -4,6 +4,7 @@ import { useState, useEffect } from "react";
 import Swal from "sweetalert2";
 import axios from "axios";
 import { useRouter } from "next/navigation";
+import { getAuthSession } from "@/lib/auth";
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:5000";
 
@@ -18,6 +19,15 @@ export default function Register() {
   useEffect(() => {
     setIsClient(true);
   }, []);
+
+  // Login session: if already logged in, avoid showing register
+  useEffect(() => {
+    if (!isClient) return;
+    const { token, role } = getAuthSession();
+    if (!token) return;
+    if (role === 'teacher') router.replace('/TeacherDashboard');
+    else router.replace('/StudentDashboard');
+  }, [isClient, router]);
 
   const handleRegister = async () => {
     // ตรวจสอบว่ารหัสผ่านตรงกันหรือไม่

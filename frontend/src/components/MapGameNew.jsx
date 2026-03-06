@@ -105,11 +105,86 @@ export default function MapGame() {
   
   // Get room and player info from URL
   const [roomId, setRoomId] = useState(() => searchParams.get('roomId') || '');
-  const [playerName, setPlayerName] = useState(() => searchParams.get('playerName') || `Player_${Math.floor(Math.random()*1000)}`);
+  const [playerName, setPlayerName] = useState(() => {
+    const authUsername = (() => {
+      if (typeof window === 'undefined') return '';
+      try { return sessionStorage.getItem('username') || localStorage.getItem('username') || ''; } catch { return ''; }
+    })();
+    if (authUsername) {
+      try { profileStorage.setName(authUsername); } catch {}
+      return authUsername;
+    }
+
+    const fromUrl = searchParams.get('playerName');
+    if (fromUrl) {
+      try { profileStorage.setName(fromUrl); } catch {}
+      return fromUrl;
+    }
+
+    const stored = (() => {
+      try { return profileStorage.getName(); } catch { return ''; }
+    })();
+    if (stored) return stored;
+
+    const generated = `Player_${Math.floor(Math.random() * 1000)}`;
+    try { profileStorage.setName(generated); } catch {}
+    return generated;
+  });
   // Allow explicit playerId via URL so teacher can open a student link that joins as that player
   const [providedPlayerId] = useState(() => searchParams.get('playerId') || profileStorage.ensureId(playerName) || null);
   // Role from query (default student). Used to filter visibility of teacher avatar
   const role = searchParams.get('role') || 'student';
+  const [roomPlayerId, setRoomPlayerId] = useState(() => {
+    if (typeof window === 'undefined') return null;
+    try { return window.sessionStorage.getItem(`qq:roomPlayerId:${roomId}:${playerName}`) || null; } catch { return null; }
+  });
+
+  // Ensure the student is registered in the room (DB) for teacher roster, even without Socket.IO.
+  useEffect(() => {
+    if (!roomId || !playerName) return;
+    if (role !== 'student') return;
+    let cancelled = false;
+
+    const join = async () => {
+      try {
+        const res = await fetch(`http://localhost:5000/api/rooms/${roomId}/join`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name: playerName }),
+        });
+        if (cancelled) return;
+        const data = await res.json().catch(() => null);
+        if (cancelled) return;
+
+        // On success: store the DB roomPlayer id.
+        if (res.ok && data?.success && data?.player?.id) {
+          const pid = String(data.player.id);
+          setRoomPlayerId(pid);
+          try { window.sessionStorage.setItem(`qq:roomPlayerId:${roomId}:${playerName}`, pid); } catch {}
+          return;
+        }
+
+        // On duplicate-name (409): resolve playerId by reading the current room roster.
+        if (res.status === 409) {
+          try {
+            const rr = await fetch(`http://localhost:5000/api/game/room/${roomId}`);
+            const rd = await rr.json().catch(() => null);
+            const list = Array.isArray(rd?.room?.players) ? rd.room.players : [];
+            const target = list.find((p) => (String(p?.name || '').trim().toLowerCase() === String(playerName).trim().toLowerCase()));
+            if (target?.playerId) {
+              const pid = String(target.playerId);
+              setRoomPlayerId(pid);
+              try { window.sessionStorage.setItem(`qq:roomPlayerId:${roomId}:${playerName}`, pid); } catch {}
+            }
+          } catch {}
+        }
+      } catch {}
+    };
+
+    join();
+    return () => { cancelled = true; };
+  }, [roomId, playerName, role]);
+
   const [isConnected, setIsConnected] = useState(false);
   
   // Avatar position (in pixels)
@@ -141,6 +216,49 @@ export default function MapGame() {
   const [currentQuestion, setCurrentQuestion] = useState(null);
   const [showQuestionModal, setShowQuestionModal] = useState(false);
   const [playerProgress, setPlayerProgress] = useState({ answered: [], score: 0 });
+
+  // REST fallback for spectator mode: periodically publish our live position.
+  useEffect(() => {
+    if (!roomId || !playerName) return;
+    if (role !== 'student') return;
+    if (!roomPlayerId) return;
+
+    let cancelled = false;
+    let lastSentAt = 0;
+
+    const tick = async () => {
+      const now = Date.now();
+      if (now - lastSentAt < 90) return;
+      lastSentAt = now;
+      try {
+        const payload = {
+          roomId,
+          playerId: roomPlayerId,
+          playerName,
+          x: position?.x ?? 0,
+          y: position?.y ?? 0,
+          score: playerProgress?.score ?? 0,
+          answered: playerProgress?.answered?.length ?? 0,
+          mode: 'map',
+          ts: now,
+        };
+        await fetch('http://localhost:5000/api/game/state', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+      } catch {}
+    };
+
+    const timer = setInterval(() => {
+      if (!cancelled) tick();
+    }, 120);
+    tick();
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
+  }, [roomId, playerName, role, roomPlayerId, position?.x, position?.y, playerProgress?.score, playerProgress?.answered?.length]);
   
     const MOVE_SPEED = 34; // pixels per second (derived from previous feel ~0.56 * 60)
   const KEY_STEP = 17;    // keyboard step distance (pixels per key press)
@@ -151,6 +269,13 @@ export default function MapGame() {
   const [questionSpots, setQuestionSpots] = useState([]);
   const [isLoadingQuestions, setIsLoadingQuestions] = useState(true);
   const totalQuestions = questionSpots.length;
+
+  // Per-question timer (seconds) from question set
+  const [timePerQuestion, setTimePerQuestion] = useState(30);
+  const [timeLeft, setTimeLeft] = useState(null);
+  const [timeUp, setTimeUp] = useState(false);
+  const timeUpHandledRef = useRef(false);
+  const timeUpTimeoutRef = useRef(null);
 
   const redirectToLobby = useCallback(() => {
     try { window.sessionStorage.setItem(`qq:kicked:${roomId}`, '1'); } catch {}
@@ -194,6 +319,9 @@ export default function MapGame() {
         
         const response = await fetch(`http://localhost:5000/api/game/questions/${roomId}`);
         const data = await response.json();
+
+        const tl = Number(data?.timeLimit);
+        if (Number.isFinite(tl) && tl > 0) setTimePerQuestion(Math.max(1, Math.floor(tl)));
         
         if (data.success && data.questions) {
           // Transform API questions to game format
@@ -240,6 +368,47 @@ export default function MapGame() {
     
     loadQuestions();
   }, [roomId]);
+
+  // Question countdown timer: starts when the question modal opens.
+  useEffect(() => {
+    if (!showQuestionModal || !currentQuestion) {
+      setTimeLeft(null);
+      setTimeUp(false);
+      timeUpHandledRef.current = false;
+      if (timeUpTimeoutRef.current) {
+        clearTimeout(timeUpTimeoutRef.current);
+        timeUpTimeoutRef.current = null;
+      }
+      return;
+    }
+
+    const durationSec = Math.max(1, Math.floor(Number(timePerQuestion) || 30));
+    const deadline = Date.now() + durationSec * 1000;
+    setTimeUp(false);
+    timeUpHandledRef.current = false;
+    setTimeLeft(durationSec);
+
+    const iv = setInterval(() => {
+      const remainMs = deadline - Date.now();
+      const secs = Math.max(0, Math.ceil(remainMs / 1000));
+      setTimeLeft(secs);
+      if (secs <= 0 && !timeUpHandledRef.current) {
+        timeUpHandledRef.current = true;
+        setTimeUp(true);
+        timeUpTimeoutRef.current = setTimeout(() => {
+          try { handleAnswerQuestion(-1, { timedOut: true }); } catch {}
+        }, 900);
+      }
+    }, 200);
+
+    return () => {
+      clearInterval(iv);
+      if (timeUpTimeoutRef.current) {
+        clearTimeout(timeUpTimeoutRef.current);
+        timeUpTimeoutRef.current = null;
+      }
+    };
+  }, [showQuestionModal, currentQuestion, timePerQuestion]);
 
   // Socket connection
   useEffect(() => {
@@ -383,12 +552,25 @@ export default function MapGame() {
   useEffect(() => {
     let timer;
     let cancelled = false;
+    const confirmedInRosterRef = { current: false };
     const check = async () => {
       try {
         if (!roomId) return;
         const r = await fetch(`http://localhost:5000/api/game/room/${roomId}`);
-        const data = await r.json();
+        const data = await r.json().catch(() => ({}));
         const status = data?.room?.status || data?.status;
+
+        // If we are a student and got kicked from the DB roster, leave even if room remains active.
+        if (role === 'student' && roomPlayerId) {
+          const roster = Array.isArray(data?.room?.players) ? data.room.players : [];
+          const stillHere = roster.some((p) => String(p?.playerId) === String(roomPlayerId));
+          if (stillHere) confirmedInRosterRef.current = true;
+          if (!cancelled && confirmedInRosterRef.current && !stillHere) {
+            redirectToLobby();
+            return;
+          }
+        }
+
         if (!cancelled && status && status !== 'active') {
           try { window.sessionStorage.setItem(`qq:kicked:${roomId}`, '1'); } catch {}
           try { window.location.replace('/StudentDashboard/gameroom'); } catch { window.location.href = '/StudentDashboard/gameroom'; }
@@ -398,7 +580,7 @@ export default function MapGame() {
     timer = setInterval(check, 1500);
     check();
     return () => { cancelled = true; clearInterval(timer); };
-  }, [roomId]);
+  }, [roomId, role, roomPlayerId, redirectToLobby]);
 
   const moveToPoint = useCallback((x, y) => {
     // Clamp to map boundaries
@@ -560,11 +742,15 @@ export default function MapGame() {
     });
   }, [position, playerProgress.answered, gameStarted]);
 
-  const handleAnswerQuestion = (selectedIndex) => {
+  const handleAnswerQuestion = (selectedIndex, opts = {}) => {
     if (!currentQuestion) return;
+
+    if (timeUp && !opts?.timedOut) return;
+
+    const timedOut = Boolean(opts?.timedOut) || !Number.isFinite(selectedIndex) || selectedIndex < 0;
     
-  const correct = selectedIndex === currentQuestion.answerIndex;
-  const earned = correct ? (currentQuestion.points ?? 100) : 0;
+    const correct = (!timedOut) && (selectedIndex === currentQuestion.answerIndex);
+    const earned = correct ? (currentQuestion.points ?? 100) : 0;
     
     // Update local progress
     const newAnswered = [...playerProgress.answered, currentQuestion.id];
@@ -580,17 +766,67 @@ export default function MapGame() {
       const endTime = Date.now();
       setGameEndTime(endTime);
       setGameCompleted(true);
-      
-      // Send game completion to server
-      if (isConnected) {
-        const elapsed = gameStartTime ? Math.max(0, endTime - gameStartTime) : 0;
-        socketManager.completeGame(newScore, elapsed, newAnswered.length);
+
+      // Send game completion to server (socket if available, otherwise REST)
+      const elapsedMs = gameStartTime ? Math.max(0, endTime - gameStartTime) : 0;
+      const playerId = socketManager.getPlayerId() || null;
+      const playerLabel = playerName || 'Player';
+      const sent = isConnected ? socketManager.completeGame(newScore, elapsedMs, newAnswered.length) : false;
+
+      if (!sent) {
+        fetch('http://localhost:5000/api/game/complete', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            roomId,
+            playerId,
+            playerName: playerLabel,
+            finalScore: newScore,
+            completionTime: elapsedMs,
+            questionsAnswered: newAnswered.length,
+          }),
+        })
+          .then((res) => res.json().catch(() => null))
+          .then((data) => {
+            if (data?.success && data?.rankings) {
+              setGameResults(data);
+            } else {
+              setGameResults({
+                roomId,
+                rankings: [
+                  {
+                    rank: 1,
+                    playerId,
+                    playerName: playerLabel,
+                    finalScore: newScore,
+                    completionTime: elapsedMs,
+                    timestamp: Date.now(),
+                  },
+                ],
+              });
+            }
+          })
+          .catch(() => {
+            setGameResults({
+              roomId,
+              rankings: [
+                {
+                  rank: 1,
+                  playerId,
+                  playerName: playerLabel,
+                  finalScore: newScore,
+                  completionTime: elapsedMs,
+                  timestamp: Date.now(),
+                },
+              ],
+            });
+          });
       }
     }
     
     // Send answer to server
     if (isConnected) {
-      socketManager.answerQuestion(currentQuestion.id, selectedIndex, correct, earned);
+      socketManager.answerQuestion(currentQuestion.id, timedOut ? -1 : selectedIndex, correct, earned);
     }
     
     // Close modal
@@ -1682,13 +1918,24 @@ export default function MapGame() {
                   <p className="text-sm text-gray-500">เลือกคำตอบที่ถูกต้อง • ข้อนี้ {currentQuestion.points ?? 100} แต้ม</p>
                 </div>
               </div>
-              <button 
-                onClick={closeQuestionModal}
-                className="w-10 h-10 bg-gray-100 hover:bg-gray-200 rounded-xl flex items-center justify-center text-gray-600 hover:text-gray-800 transition-all duration-200 transform hover:scale-105"
-              >
-                ✕
-              </button>
+              <div className="flex items-center gap-3">
+                <div className={`px-3 py-1 rounded-xl text-sm font-extrabold border ${timeUp ? 'bg-rose-100 text-rose-700 border-rose-200' : 'bg-blue-50 text-blue-700 border-blue-200'}`}>
+                  ⏱️ {typeof timeLeft === 'number' ? timeLeft : Math.max(1, Math.floor(Number(timePerQuestion) || 30))}s
+                </div>
+                <button 
+                  onClick={closeQuestionModal}
+                  className="w-10 h-10 bg-gray-100 hover:bg-gray-200 rounded-xl flex items-center justify-center text-gray-600 hover:text-gray-800 transition-all duration-200 transform hover:scale-105"
+                >
+                  ✕
+                </button>
+              </div>
             </div>
+
+            {timeUp && (
+              <div className="mb-4 text-sm font-bold text-rose-700 bg-rose-50 border border-rose-200 rounded-2xl px-4 py-3">
+                หมดเวลา! ข้อนี้นับว่าตอบผิด
+              </div>
+            )}
             
             {/* Question Text */}
             <div className="bg-gradient-to-br from-blue-50 to-purple-50 rounded-2xl p-6 mb-6 border border-blue-100">
@@ -1705,12 +1952,17 @@ export default function MapGame() {
                   'from-green-400 to-green-500 hover:from-green-500 hover:to-green-600',
                   'from-purple-400 to-purple-500 hover:from-purple-500 hover:to-purple-600'
                 ];
+
+                const colorClass = timeUp
+                  ? 'from-red-500 to-red-600'
+                  : colors[index];
                 
                 return (
                   <button
                     key={index}
                     onClick={() => handleAnswerQuestion(index)}
-                    className={`w-full p-4 text-left bg-gradient-to-r ${colors[index]} text-white rounded-xl transition-all duration-200 transform hover:scale-[1.02] hover:shadow-lg font-medium flex items-center space-x-4`}
+                    disabled={timeUp}
+                    className={`w-full p-4 text-left bg-gradient-to-r ${colorClass} text-white rounded-xl transition-all duration-200 font-medium flex items-center space-x-4 ${timeUp ? 'opacity-90 cursor-not-allowed' : 'transform hover:scale-[1.02] hover:shadow-lg'}`}
                   >
                     <div className="w-8 h-8 bg-white/20 rounded-lg flex items-center justify-center font-bold">
                       {choiceLabels[index]}
@@ -1779,7 +2031,16 @@ export default function MapGame() {
                 🏆 ดูอันดับ
               </button>
               <button
-                onClick={() => router.push('/StudentDashboard/gameroom')}
+                onClick={async () => {
+                  try {
+                    if (roomId && roomPlayerId) {
+                      await fetch(`http://localhost:5000/api/rooms/${roomId}/leave/${roomPlayerId}`, { method: 'POST' });
+                    }
+                  } catch {}
+                  try { window.sessionStorage.removeItem(`qq:roomPlayerId:${roomId}:${playerName}`); } catch {}
+                  try { setRoomPlayerId(null); } catch {}
+                  router.push('/StudentDashboard/gameroom');
+                }}
                 className="flex-1 bg-gradient-to-r from-gray-500 to-gray-600 hover:from-gray-600 hover:to-gray-700 text-white font-bold py-4 px-6 rounded-2xl transition-all duration-300 transform hover:scale-105 shadow-lg"
               >
                 🏠 กลับห้อง
@@ -1871,7 +2132,9 @@ export default function MapGame() {
                         <div className="text-xl font-bold text-green-600">
                           {result.finalScore} แต้ม
                         </div>
-                        {/* Removed per-ranking time display */}
+                        <div className="text-sm text-gray-600">
+                          ใช้เวลา: {Number.isFinite(result?.completionTime) ? (Number(result.completionTime) / 1000).toFixed(1) : '—'} วินาที
+                        </div>
                       </div>
                     </div>
                     
@@ -1898,7 +2161,16 @@ export default function MapGame() {
                 ❌ ปิด
               </button>
               <button
-                onClick={() => router.push('/StudentDashboard/gameroom')}
+                onClick={async () => {
+                  try {
+                    if (roomId && roomPlayerId) {
+                      await fetch(`http://localhost:5000/api/rooms/${roomId}/leave/${roomPlayerId}`, { method: 'POST' });
+                    }
+                  } catch {}
+                  try { window.sessionStorage.removeItem(`qq:roomPlayerId:${roomId}:${playerName}`); } catch {}
+                  try { setRoomPlayerId(null); } catch {}
+                  router.push('/StudentDashboard/gameroom');
+                }}
                 className="flex-1 bg-gradient-to-r from-blue-500 to-purple-500 hover:from-blue-600 hover:to-purple-600 text-white font-bold py-4 px-6 rounded-2xl transition-all duration-300 transform hover:scale-105 shadow-lg"
               >
                 🏠 กลับห้อง

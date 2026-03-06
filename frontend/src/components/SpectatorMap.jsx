@@ -1,5 +1,5 @@
 "use client";
-import React, { useMemo } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 
 // Read-only live map for teachers to spectate students
 // Props:
@@ -15,6 +15,71 @@ export default function SpectatorMap({ roomId, players = {}, questions = [], sel
   const MAP_HEIGHT = 800;
   // Purely presentational: rely on props from parent (TeacherGameView)
   const effectivePlayers = players || {};
+
+  // Smooth incoming polled positions so movement doesn't look choppy.
+  const targetsRef = useRef({});
+  const lastTsRef = useRef(0);
+  const rafRef = useRef(null);
+  const [smoothedPos, setSmoothedPos] = useState({});
+
+  useEffect(() => {
+    const nextTargets = {};
+    Object.values(effectivePlayers).forEach((p) => {
+      const pid = p?.playerId;
+      if (!pid) return;
+      const tx = (typeof p.x === 'number') ? p.x : (MAP_WIDTH / 2);
+      const ty = (typeof p.y === 'number') ? p.y : (MAP_HEIGHT / 2);
+      nextTargets[pid] = { x: tx, y: ty };
+    });
+    targetsRef.current = nextTargets;
+
+    setSmoothedPos((prev) => {
+      const next = { ...(prev || {}) };
+      Object.entries(nextTargets).forEach(([pid, t]) => {
+        if (!next[pid]) next[pid] = { x: t.x, y: t.y };
+      });
+      Object.keys(next).forEach((pid) => {
+        if (!nextTargets[pid]) delete next[pid];
+      });
+      return next;
+    });
+  }, [effectivePlayers, MAP_WIDTH, MAP_HEIGHT]);
+
+  useEffect(() => {
+    const timeConstantMs = 110;
+    const step = (t) => {
+      if (!lastTsRef.current) lastTsRef.current = t;
+      const dt = Math.min(50, Math.max(0, t - lastTsRef.current));
+      lastTsRef.current = t;
+      const alpha = 1 - Math.exp(-dt / timeConstantMs);
+
+      const targets = targetsRef.current || {};
+      setSmoothedPos((prev) => {
+        const cur = prev || {};
+        const next = { ...cur };
+        Object.entries(targets).forEach(([pid, target]) => {
+          const c = next[pid] || target;
+          next[pid] = {
+            x: c.x + (target.x - c.x) * alpha,
+            y: c.y + (target.y - c.y) * alpha,
+          };
+        });
+        Object.keys(next).forEach((pid) => {
+          if (!targets[pid]) delete next[pid];
+        });
+        return next;
+      });
+
+      rafRef.current = requestAnimationFrame(step);
+    };
+
+    rafRef.current = requestAnimationFrame(step);
+    return () => {
+      if (rafRef.current) cancelAnimationFrame(rafRef.current);
+      rafRef.current = null;
+      lastTsRef.current = 0;
+    };
+  }, []);
   const effectiveQuestions = questions || [];
   const ids = useMemo(() => Object.keys(effectivePlayers || {}), [effectivePlayers]);
   const selected = selectedPlayerId && effectivePlayers[selectedPlayerId] ? effectivePlayers[selectedPlayerId] : null;
@@ -137,7 +202,9 @@ export default function SpectatorMap({ roomId, players = {}, questions = [], sel
 
             {/* Players */}
             {Object.values(effectivePlayers).map((p) => {
-              const playerX = p.x; const playerY = p.y;
+              const sp = p?.playerId ? smoothedPos[p.playerId] : null;
+              const playerX = (sp && typeof sp.x === 'number') ? sp.x : p.x;
+              const playerY = (sp && typeof sp.y === 'number') ? sp.y : p.y;
               const isSelected = p === selected;
               return (
                 <g key={p.playerId || p.name}>

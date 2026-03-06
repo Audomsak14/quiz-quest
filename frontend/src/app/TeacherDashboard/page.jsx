@@ -3,29 +3,30 @@ import { useState, useEffect } from "react";
 import Swal from "sweetalert2";
 import { useRouter } from "next/navigation";
 import axios from "axios";
-import { withAuth } from "../../lib/auth";
+import { withAuth, clearAuthSession, getAuthSession } from "../../lib/auth";
 
 export default function TeacherDashboard() {
   const router = useRouter();
-  const [teacherName, setTeacherName] = useState('ครู');
   const [questionSets, setQuestionSets] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
   const [dashboardStats, setDashboardStats] = useState({
     studentsJoined: 0,
+    averageScorePercent: 0,
     testsToday: 0,
   });
 
   useEffect(() => {
-    if (typeof window !== 'undefined') {
-      const storedName = (
-        window.sessionStorage?.getItem('username') ||
-        window.localStorage?.getItem('username') ||
-        ''
-      ).trim();
-      if (storedName) setTeacherName(storedName);
+    const { token, role } = getAuthSession();
+    if (!token) {
+      router.replace('/login');
+      return;
+    }
+    if (role && role !== 'teacher') {
+      router.replace('/StudentDashboard');
+      return;
     }
     loadDashboard();
-  }, []);
+  }, [router]);
 
   const loadDashboard = async () => {
     setIsLoading(true);
@@ -36,15 +37,18 @@ export default function TeacherDashboard() {
       ]);
       setQuestionSets(Array.isArray(setsRes.data) ? setsRes.data : []);
       const stats = statsRes.data?.stats || {};
+      const avgRaw = Number(stats.averageScorePercent);
+      const avgClamped = Number.isFinite(avgRaw) ? Math.min(100, Math.max(0, avgRaw)) : 0;
       setDashboardStats({
         studentsJoined: Number.isFinite(stats.studentsJoined) ? stats.studentsJoined : 0,
+        averageScorePercent: Number(avgClamped.toFixed(2)),
         testsToday: Number.isFinite(stats.testsToday) ? stats.testsToday : 0,
       });
     } catch (err) {
       console.error('Error loading teacher dashboard:', err);
       // Keep existing UI, fall back to zeros when API fails
       setQuestionSets([]);
-      setDashboardStats({ studentsJoined: 0, testsToday: 0 });
+      setDashboardStats({ studentsJoined: 0, averageScorePercent: 0, testsToday: 0 });
     } finally {
       setIsLoading(false);
     }
@@ -78,10 +82,12 @@ export default function TeacherDashboard() {
 
   const handleCreateRoom = async (setId) => {
     try {
+      const set = (questionSets || []).find((s) => String(s?.id) === String(setId));
+      const roomName = (set?.title || '').trim();
       const response = await axios.post('http://localhost:5000/api/rooms', {
         questionSetId: setId,
-        name: `ห้องสำหรับชุดคำถาม`,
-        isActive: true
+        ...(roomName ? { name: roomName } : {}),
+        isActive: true,
       }, withAuth());
       
       // Redirect ไปหน้าจัดการห้องของครู
@@ -98,144 +104,9 @@ export default function TeacherDashboard() {
   };
 
   const handleLogout = async () => {
-    localStorage.removeItem('token');
-    localStorage.removeItem('user');
+    clearAuthSession();
     await Swal.fire({ icon: 'success', title: 'ออกจากระบบสำเร็จ', timer: 1200, showConfirmButton: false });
     router.push('/login');
-  };
-
-  const handleShowTestsToday = async () => {
-    try {
-      const response = await axios.get('http://localhost:5000/api/teacher/tests-today', withAuth());
-      const tests = Array.isArray(response.data?.tests) ? response.data.tests : [];
-
-      if (tests.length === 0) {
-        await Swal.fire({
-          icon: 'info',
-          title: 'ยังไม่มีการทดสอบวันนี้',
-          text: 'เมื่อมีการสร้างห้องทดสอบในวันนี้ รายการจะแสดงที่นี่',
-        });
-        return;
-      }
-
-      const rows = tests
-        .map((test, index) => {
-          const when = test.createdAt
-            ? new Date(test.createdAt).toLocaleString('th-TH')
-            : '-';
-
-          return `
-            <tr>
-              <td style="padding:8px 10px;border-bottom:1px solid #e5e7eb;text-align:center;">${index + 1}</td>
-              <td style="padding:8px 10px;border-bottom:1px solid #e5e7eb;">${test.name || '-'}</td>
-              <td style="padding:8px 10px;border-bottom:1px solid #e5e7eb;">${test.questionSetTitle || '-'}</td>
-              <td style="padding:8px 10px;border-bottom:1px solid #e5e7eb;text-align:center;">${test.playersCount || 0}</td>
-              <td style="padding:8px 10px;border-bottom:1px solid #e5e7eb;">${when}</td>
-            </tr>
-          `;
-        })
-        .join('');
-
-      await Swal.fire({
-        title: 'รายการการทดสอบวันนี้',
-        width: 1000,
-        html: `
-          <div style="max-height:55vh;overflow:auto;text-align:left;">
-            <table style="width:100%;border-collapse:collapse;font-size:14px;">
-              <thead>
-                <tr style="background:#f3f4f6;position:sticky;top:0;">
-                  <th style="padding:10px;border-bottom:1px solid #d1d5db;">#</th>
-                  <th style="padding:10px;border-bottom:1px solid #d1d5db;">ชื่อห้อง</th>
-                  <th style="padding:10px;border-bottom:1px solid #d1d5db;">ชุดคำถาม</th>
-                  <th style="padding:10px;border-bottom:1px solid #d1d5db;">ผู้เล่น</th>
-                  <th style="padding:10px;border-bottom:1px solid #d1d5db;">เวลาที่สร้าง</th>
-                </tr>
-              </thead>
-              <tbody>
-                ${rows}
-              </tbody>
-            </table>
-          </div>
-        `,
-        confirmButtonText: 'ปิด',
-      });
-    } catch (err) {
-      console.error('Error loading tests today list:', err);
-      await Swal.fire({
-        icon: 'error',
-        title: 'โหลดรายการไม่สำเร็จ',
-        text: err.response?.data?.error || err.message,
-      });
-    }
-  };
-
-  const handleShowStudentsJoined = async () => {
-    try {
-      const response = await axios.get('http://localhost:5000/api/teacher/students', withAuth());
-      const students = Array.isArray(response.data?.students) ? response.data.students : [];
-
-      if (students.length === 0) {
-        await Swal.fire({
-          icon: 'info',
-          title: 'ยังไม่มีนักเรียนที่เคยเข้าร่วม',
-          text: 'เมื่อมีนักเรียนเข้าร่วมเล่นเกมกับบัญชีครูนี้ รายการจะปรากฏที่นี่',
-        });
-        return;
-      }
-
-      const rows = students
-        .map((student, index) => {
-          const when = student.lastPlayedAt
-            ? new Date(student.lastPlayedAt).toLocaleString('th-TH')
-            : '-';
-
-          return `
-            <tr>
-              <td style="padding:8px 10px;border-bottom:1px solid #e5e7eb;text-align:center;">${index + 1}</td>
-              <td style="padding:8px 10px;border-bottom:1px solid #e5e7eb;">${student.playerName || '-'}</td>
-              <td style="padding:8px 10px;border-bottom:1px solid #e5e7eb;">${student.playerId || '-'}</td>
-              <td style="padding:8px 10px;border-bottom:1px solid #e5e7eb;text-align:center;">${student.attemptsCount || 0}</td>
-              <td style="padding:8px 10px;border-bottom:1px solid #e5e7eb;text-align:center;">${student.roomsCount || 0}</td>
-              <td style="padding:8px 10px;border-bottom:1px solid #e5e7eb;text-align:center;">${student.bestScore || 0}</td>
-              <td style="padding:8px 10px;border-bottom:1px solid #e5e7eb;">${when}</td>
-            </tr>
-          `;
-        })
-        .join('');
-
-      await Swal.fire({
-        title: 'นักเรียนที่เคยเข้าร่วมกับครูคนนี้',
-        width: 1100,
-        html: `
-          <div style="max-height:58vh;overflow:auto;text-align:left;">
-            <table style="width:100%;border-collapse:collapse;font-size:14px;">
-              <thead>
-                <tr style="background:#f3f4f6;position:sticky;top:0;">
-                  <th style="padding:10px;border-bottom:1px solid #d1d5db;">#</th>
-                  <th style="padding:10px;border-bottom:1px solid #d1d5db;">ชื่อ</th>
-                  <th style="padding:10px;border-bottom:1px solid #d1d5db;">ไอดีผู้เล่น</th>
-                  <th style="padding:10px;border-bottom:1px solid #d1d5db;">จำนวนครั้ง</th>
-                  <th style="padding:10px;border-bottom:1px solid #d1d5db;">จำนวนห้อง</th>
-                  <th style="padding:10px;border-bottom:1px solid #d1d5db;">คะแนนสูงสุด</th>
-                  <th style="padding:10px;border-bottom:1px solid #d1d5db;">เล่นล่าสุด</th>
-                </tr>
-              </thead>
-              <tbody>
-                ${rows}
-              </tbody>
-            </table>
-          </div>
-        `,
-        confirmButtonText: 'ปิด',
-      });
-    } catch (err) {
-      console.error('Error loading joined students list:', err);
-      await Swal.fire({
-        icon: 'error',
-        title: 'โหลดรายการนักเรียนไม่สำเร็จ',
-        text: err.response?.data?.error || err.message,
-      });
-    }
   };
 
   if (isLoading) {
@@ -287,7 +158,6 @@ export default function TeacherDashboard() {
                   </svg>
                   <span>จัดการแบบทดสอบและการเรียนรู้</span>
                 </p>
-                <p className="text-blue-200 text-sm mt-2">ชื่อผู้สอน: {teacherName}</p>
               </div>
             </div>
             <button
@@ -304,7 +174,7 @@ export default function TeacherDashboard() {
       </div>
 
       {/* Stats Cards */}
-      <div className="relative z-10 grid lg:grid-cols-3 md:grid-cols-2 gap-6 mb-10">
+      <div className="relative z-10 grid lg:grid-cols-4 md:grid-cols-2 gap-6 mb-10">
         <div className="group bg-gradient-to-br from-blue-500/20 to-purple-500/20 backdrop-blur-2xl rounded-2xl p-6 border border-white/10 shadow-xl hover:scale-105 hover:shadow-2xl transition-all duration-300">
           <div className="flex items-center justify-between">
             <div>
@@ -320,15 +190,11 @@ export default function TeacherDashboard() {
           </div>
         </div>
 
-        <button
-          onClick={handleShowStudentsJoined}
-          type="button"
-          className="group bg-gradient-to-br from-purple-500/20 to-pink-500/20 backdrop-blur-2xl rounded-2xl p-6 border border-white/10 shadow-xl hover:scale-105 hover:shadow-2xl transition-all duration-300 text-left"
-        >
+        <div className="group bg-gradient-to-br from-purple-500/20 to-pink-500/20 backdrop-blur-2xl rounded-2xl p-6 border border-white/10 shadow-xl hover:scale-105 hover:shadow-2xl transition-all duration-300">
           <div className="flex items-center justify-between">
             <div>
               <h3 className="text-4xl font-bold text-white mb-2">{dashboardStats.studentsJoined}</h3>
-              <p className="text-purple-200 font-semibold text-lg">นักเรียนที่เคยเข้าร่วม (คลิกเพื่อดูรายชื่อ)</p>
+              <p className="text-purple-200 font-semibold text-lg">นักเรียนที่เข้าร่วม</p>
               <div className="w-12 h-1 bg-gradient-to-r from-purple-400 to-pink-400 rounded-full mt-2"></div>
             </div>
             <div className="w-16 h-16 bg-gradient-to-br from-purple-500 to-pink-500 rounded-2xl flex items-center justify-center shadow-xl group-hover:rotate-12 transition-transform duration-300">
@@ -337,17 +203,28 @@ export default function TeacherDashboard() {
               </svg>
             </div>
           </div>
-        </button>
+        </div>
 
-        <button
-          onClick={handleShowTestsToday}
-          type="button"
-          className="group bg-gradient-to-br from-red-500/20 to-orange-500/20 backdrop-blur-2xl rounded-2xl p-6 border border-white/10 shadow-xl hover:scale-105 hover:shadow-2xl transition-all duration-300 text-left"
-        >
+        <div className="group bg-gradient-to-br from-pink-500/20 to-red-500/20 backdrop-blur-2xl rounded-2xl p-6 border border-white/10 shadow-xl hover:scale-105 hover:shadow-2xl transition-all duration-300">
+          <div className="flex items-center justify-between">
+            <div>
+              <h3 className="text-4xl font-bold text-white mb-2">{dashboardStats.averageScorePercent}%</h3>
+              <p className="text-pink-200 font-semibold text-lg">คะแนนเฉลี่ย</p>
+              <div className="w-12 h-1 bg-gradient-to-r from-pink-400 to-red-400 rounded-full mt-2"></div>
+            </div>
+            <div className="w-16 h-16 bg-gradient-to-br from-pink-500 to-red-500 rounded-2xl flex items-center justify-center shadow-xl group-hover:rotate-12 transition-transform duration-300">
+              <svg className="w-8 h-8 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
+              </svg>
+            </div>
+          </div>
+        </div>
+
+        <div className="group bg-gradient-to-br from-red-500/20 to-orange-500/20 backdrop-blur-2xl rounded-2xl p-6 border border-white/10 shadow-xl hover:scale-105 hover:shadow-2xl transition-all duration-300">
           <div className="flex items-center justify-between">
             <div>
               <h3 className="text-4xl font-bold text-white mb-2">{dashboardStats.testsToday}</h3>
-              <p className="text-red-200 font-semibold text-lg">การทดสอบวันนี้ (คลิกเพื่อดูรายการ)</p>
+              <p className="text-red-200 font-semibold text-lg">การทดสอบวันนี้</p>
               <div className="w-12 h-1 bg-gradient-to-r from-red-400 to-orange-400 rounded-full mt-2"></div>
             </div>
             <div className="w-16 h-16 bg-gradient-to-br from-red-500 to-orange-500 rounded-2xl flex items-center justify-center shadow-xl group-hover:rotate-12 transition-transform duration-300">
@@ -356,7 +233,7 @@ export default function TeacherDashboard() {
               </svg>
             </div>
           </div>
-        </button>
+        </div>
       </div>
 
       {/* Create New Question Set Button */}

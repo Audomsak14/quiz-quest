@@ -3,7 +3,7 @@ import { useState, useEffect } from "react";
 import { useRouter, useParams } from "next/navigation";
 import axios from "axios";
 import Swal from "sweetalert2";
-import { withAuth } from "../../../lib/auth";
+import { getAuthSession, withAuth } from "../../../lib/auth";
 
 export default function TeacherRoomPage() {
   const router = useRouter();
@@ -16,6 +16,16 @@ export default function TeacherRoomPage() {
 
   useEffect(() => {
     if (roomId) {
+      const { token, role } = getAuthSession();
+      if (!token) {
+        router.replace('/login');
+        return;
+      }
+      if (role !== 'teacher') {
+        router.replace('/StudentDashboard');
+        return;
+      }
+
       fetchRoomData();
       // Set up polling for real-time updates
       const interval = setInterval(fetchRoomData, 2000);
@@ -43,6 +53,11 @@ export default function TeacherRoomPage() {
       setPlayers(unique);
     } catch (err) {
       console.error("Error fetching room data:", err);
+      const status = err.response?.status;
+      if (status === 401 || status === 403) {
+        router.replace('/login');
+        return;
+      }
       if (err.response?.status === 404) {
         await Swal.fire({
           icon: 'error',

@@ -356,7 +356,6 @@ export default function CharacterMaleFemaleChoice() {
               >
                 เลือกตัวละครหญิง
               </button>
-              <button onClick={async()=>{ profileStorage.setImage(''); profileStorage.setCharacterId(''); await Swal.fire({icon:'success',title:'ซ่อนตัวละครแล้ว',timer:900,showConfirmButton:false}); router.back(); }} className="px-4 py-2 rounded-xl bg-slate-700/90 hover:bg-slate-800 text-white font-semibold w-full">ซ่อนตัวละคร</button>
             </div>
             <div className="mt-2 text-xs text-blue-200">คลิก “เลือกตัวละครหญิง” เพื่อใช้สไปรต์นี้ในเกม (พรีวิวเดินอัตโนมัติ)</div>
             </div>
@@ -380,7 +379,6 @@ export default function CharacterMaleFemaleChoice() {
                 >
                   เลือกตัวละครชาย
                 </button>
-                <button onClick={async()=>{ profileStorage.setImage(''); profileStorage.setCharacterId(''); await Swal.fire({icon:'success',title:'ซ่อนตัวละครแล้ว',timer:900,showConfirmButton:false}); router.back(); }} className="px-4 py-2 rounded-xl bg-slate-700/90 hover:bg-slate-800 text-white font-semibold w-full">ซ่อนตัวละคร</button>
               </div>
               <div className="mt-2 text-xs text-blue-200">คลิก “เลือกตัวละครชาย” เพื่อใช้สไปรต์นี้ในเกม</div>
             </div>
