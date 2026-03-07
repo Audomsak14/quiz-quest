@@ -1,5 +1,5 @@
 "use client";
-import { useMemo, useState, useEffect } from "react";
+import { useMemo, useRef, useState, useEffect } from "react";
 import Swal from "sweetalert2";
 import { useRouter } from "next/navigation";
 import axios from "axios";
@@ -7,11 +7,19 @@ import { withAuth, clearAuthSession, getAuthSession } from "../../lib/auth";
 
 export default function TeacherDashboard() {
   const router = useRouter();
+  const todayCloseTimerRef = useRef(null);
+  const todayTestsCloseTimerRef = useRef(null);
+
   const [questionSets, setQuestionSets] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
   const [todayOpen, setTodayOpen] = useState(false);
   const [todayParticipants, setTodayParticipants] = useState([]);
   const [todayParticipantsLoading, setTodayParticipantsLoading] = useState(false);
+
+  const [todayTestsOpen, setTodayTestsOpen] = useState(false);
+  const [todayTests, setTodayTests] = useState([]);
+  const [todayTestsLoading, setTodayTestsLoading] = useState(false);
+
   const [dashboardStats, setDashboardStats] = useState({
     studentsJoined: 0,
     averageScorePercent: 0,
@@ -59,6 +67,48 @@ export default function TeacherDashboard() {
     }
     loadDashboard();
   }, [router]);
+
+  useEffect(() => {
+    return () => {
+      if (todayCloseTimerRef.current) clearTimeout(todayCloseTimerRef.current);
+      if (todayTestsCloseTimerRef.current) clearTimeout(todayTestsCloseTimerRef.current);
+    };
+  }, []);
+
+  const openTodayParticipants = () => {
+    if (todayCloseTimerRef.current) {
+      clearTimeout(todayCloseTimerRef.current);
+      todayCloseTimerRef.current = null;
+    }
+    setTodayOpen(true);
+    // Always refresh so names can re-appear after they play again.
+    reloadTodayParticipants();
+  };
+
+  const scheduleCloseTodayParticipants = () => {
+    if (todayCloseTimerRef.current) clearTimeout(todayCloseTimerRef.current);
+    todayCloseTimerRef.current = setTimeout(() => {
+      setTodayOpen(false);
+      todayCloseTimerRef.current = null;
+    }, 180);
+  };
+
+  const openTodayTests = () => {
+    if (todayTestsCloseTimerRef.current) {
+      clearTimeout(todayTestsCloseTimerRef.current);
+      todayTestsCloseTimerRef.current = null;
+    }
+    setTodayTestsOpen(true);
+    ensureTodayTestsLoaded();
+  };
+
+  const scheduleCloseTodayTests = () => {
+    if (todayTestsCloseTimerRef.current) clearTimeout(todayTestsCloseTimerRef.current);
+    todayTestsCloseTimerRef.current = setTimeout(() => {
+      setTodayTestsOpen(false);
+      todayTestsCloseTimerRef.current = null;
+    }, 180);
+  };
 
   const loadDashboard = async () => {
     setIsLoading(true);
@@ -158,6 +208,83 @@ export default function TeacherDashboard() {
     }
   };
 
+  const reloadTodayParticipants = async () => {
+    if (todayParticipantsLoading) return;
+    setTodayParticipantsLoading(true);
+    try {
+      const res = await axios.get('http://localhost:5000/api/teacher/today-participants', withAuth());
+      const list = Array.isArray(res.data?.participants) ? res.data.participants : [];
+      setTodayParticipants(list);
+
+    // Keep the card number consistent with the popup list.
+    const normalizeName = (value) => String(value || '')
+      .normalize('NFKC')
+      .replace(/[\u200B-\u200D\uFEFF]/g, '')
+      .replace(/\s+/g, ' ')
+      .trim();
+    const uniq = new Map();
+    for (const item of list) {
+      const rawName = (typeof item === 'string') ? item : item?.name;
+      const nm = normalizeName(rawName);
+      if (!nm) continue;
+      uniq.set(nm.toLowerCase(), true);
+    }
+    setDashboardStats((prev) => ({ ...prev, studentsJoined: uniq.size }));
+    } catch (e) {
+      console.error('Failed to load today participants', e);
+      setTodayParticipants([]);
+    setDashboardStats((prev) => ({ ...prev, studentsJoined: 0 }));
+    } finally {
+      setTodayParticipantsLoading(false);
+    }
+  };
+
+  const handleDeleteTodayParticipant = async (name) => {
+    const displayName = String(name || '').trim();
+    if (!displayName) return;
+
+    const res = await Swal.fire({
+      title: 'ยืนยันการลบรายชื่อวันนี้?',
+      text: `ซ่อนชื่อ “${displayName}” ออกจากรายชื่อเข้าร่วมวันนี้ (ไม่ลบประวัติการเล่นของนักเรียน)`,
+      icon: 'warning',
+      showCancelButton: true,
+      confirmButtonText: 'ลบ',
+      cancelButtonText: 'ยกเลิก',
+      confirmButtonColor: '#ef4444',
+    });
+    if (!res.isConfirmed) return;
+
+    try {
+      await axios.post('http://localhost:5000/api/teacher/today-participants/delete', { name: displayName }, withAuth());
+      await reloadTodayParticipants();
+      await loadDashboard();
+    } catch (e) {
+      console.error('Failed to delete today participant', e);
+      await Swal.fire({
+        icon: 'error',
+        title: 'ลบไม่สำเร็จ',
+        text: e.response?.data?.error || e.message,
+      });
+    }
+  };
+
+  const ensureTodayTestsLoaded = async () => {
+    if (todayTestsLoading) return;
+    if (Array.isArray(todayTests) && todayTests.length) return;
+
+    setTodayTestsLoading(true);
+    try {
+      const res = await axios.get('http://localhost:5000/api/teacher/today-tests', withAuth());
+      const list = Array.isArray(res.data?.tests) ? res.data.tests : [];
+      setTodayTests(list);
+    } catch (e) {
+      console.error('Failed to load today tests', e);
+      setTodayTests([]);
+    } finally {
+      setTodayTestsLoading(false);
+    }
+  };
+
   if (isLoading) {
     return (
       <div className="min-h-screen bg-gradient-to-b from-[#030637] via-[#180161] to-[#FF204E] flex items-center justify-center">
@@ -223,7 +350,7 @@ export default function TeacherDashboard() {
       </div>
 
       {/* Stats Cards */}
-      <div className="relative z-10 grid lg:grid-cols-4 md:grid-cols-2 gap-6 mb-10">
+      <div className={`relative ${(todayOpen || todayTestsOpen) ? 'z-50' : 'z-10'} grid lg:grid-cols-3 md:grid-cols-2 gap-6 mb-10`}>
         <div className="group bg-gradient-to-br from-blue-500/20 to-purple-500/20 backdrop-blur-2xl rounded-2xl p-6 border border-white/10 shadow-xl hover:scale-105 hover:shadow-2xl transition-all duration-300">
           <div className="flex items-center justify-between">
             <div>
@@ -239,43 +366,70 @@ export default function TeacherDashboard() {
           </div>
         </div>
 
-        <div className="group bg-gradient-to-br from-purple-500/20 to-pink-500/20 backdrop-blur-2xl rounded-2xl p-6 border border-white/10 shadow-xl hover:scale-105 hover:shadow-2xl transition-all duration-300">
-          <div className="flex items-center justify-between">
-            <div>
-              <h3 className="text-4xl font-bold text-white mb-2">{dashboardStats.studentsJoined}</h3>
-              <p className="text-purple-200 font-semibold text-lg">นักเรียนที่เข้าร่วม</p>
-              <div className="w-12 h-1 bg-gradient-to-r from-purple-400 to-pink-400 rounded-full mt-2"></div>
-            </div>
-            <div className="w-16 h-16 bg-gradient-to-br from-purple-500 to-pink-500 rounded-2xl flex items-center justify-center shadow-xl group-hover:rotate-12 transition-transform duration-300">
-              <svg className="w-8 h-8 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />
-              </svg>
+        <div
+          className={todayOpen ? "relative z-50" : "relative"}
+          onMouseEnter={openTodayParticipants}
+          onMouseLeave={scheduleCloseTodayParticipants}
+        >
+          <div className="group bg-gradient-to-br from-purple-500/20 to-pink-500/20 backdrop-blur-2xl rounded-2xl p-6 border border-white/10 shadow-xl hover:scale-105 hover:shadow-2xl transition-all duration-300">
+            <div className="flex items-center justify-between">
+              <div>
+                <h3 className="text-4xl font-bold text-white mb-2">{dashboardStats.studentsJoined}</h3>
+                <p className="text-purple-200 font-semibold text-lg">นักเรียนที่เข้าร่วม</p>
+                <div className="w-12 h-1 bg-gradient-to-r from-purple-400 to-pink-400 rounded-full mt-2"></div>
+              </div>
+              <div className="w-16 h-16 bg-gradient-to-br from-purple-500 to-pink-500 rounded-2xl flex items-center justify-center shadow-xl group-hover:rotate-12 transition-transform duration-300">
+                <svg className="w-8 h-8 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />
+                </svg>
+              </div>
             </div>
           </div>
-        </div>
 
-        <div className="group bg-gradient-to-br from-pink-500/20 to-red-500/20 backdrop-blur-2xl rounded-2xl p-6 border border-white/10 shadow-xl hover:scale-105 hover:shadow-2xl transition-all duration-300">
-          <div className="flex items-center justify-between">
-            <div>
-              <h3 className="text-4xl font-bold text-white mb-2">{dashboardStats.averageScorePercent}%</h3>
-              <p className="text-pink-200 font-semibold text-lg">คะแนนเฉลี่ย</p>
-              <div className="w-12 h-1 bg-gradient-to-r from-pink-400 to-red-400 rounded-full mt-2"></div>
+          {todayOpen && (
+            <div
+              className="absolute z-50 top-full right-0 mt-3 w-[360px] max-w-[calc(100vw-2rem)] bg-white/5 backdrop-blur-2xl rounded-3xl shadow-2xl p-4 border border-white/10"
+              onMouseEnter={openTodayParticipants}
+              onMouseLeave={scheduleCloseTodayParticipants}
+            >
+              <div className="text-white font-bold mb-2">รายชื่อนักเรียนที่เข้าร่วมวันนี้</div>
+
+              {todayParticipantsLoading ? (
+                <div className="text-white/80">กำลังโหลดรายชื่อ…</div>
+              ) : (mergedTodayParticipants.length ? (
+                <div className="max-h-72 overflow-y-auto space-y-2 pr-1">
+                  {mergedTodayParticipants.map((item, idx) => {
+                    const name = String(item?.name || '');
+
+                    return (
+                      <div key={`${name}-${idx}`} className="bg-white/5 border border-white/10 rounded-2xl px-3 py-2 text-white flex items-center justify-between gap-3">
+                        <div className="font-semibold truncate">{name}</div>
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            handleDeleteTodayParticipant(name);
+                          }}
+                          className="px-3 py-1 rounded-xl bg-white/10 hover:bg-white/20 text-white/90 hover:text-white text-sm font-semibold transition-colors"
+                        >
+                          ลบ
+                        </button>
+                      </div>
+                    );
+                  })}
+                </div>
+              ) : (
+                <div className="text-white/80">ยังไม่มีนักเรียนเข้าร่วมวันนี้</div>
+              ))}
             </div>
-            <div className="w-16 h-16 bg-gradient-to-br from-pink-500 to-red-500 rounded-2xl flex items-center justify-center shadow-xl group-hover:rotate-12 transition-transform duration-300">
-              <svg className="w-8 h-8 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
-              </svg>
-            </div>
-          </div>
+          )}
         </div>
 
         <div
-          className="relative"
-          onMouseEnter={() => {
-            setTodayOpen(true);
-            ensureTodayParticipantsLoaded();
-          }}
-          onMouseLeave={() => setTodayOpen(false)}
+          className={todayTestsOpen ? "relative z-50" : "relative"}
+          onMouseEnter={openTodayTests}
+          onMouseLeave={scheduleCloseTodayTests}
         >
           <div className="group bg-gradient-to-br from-red-500/20 to-orange-500/20 backdrop-blur-2xl rounded-2xl p-6 border border-white/10 shadow-xl hover:scale-105 hover:shadow-2xl transition-all duration-300 text-left">
             <div className="flex items-center justify-between">
@@ -292,29 +446,30 @@ export default function TeacherDashboard() {
             </div>
           </div>
 
-          {todayOpen && (
-            <div className="absolute top-full right-0 mt-3 w-[360px] max-w-[calc(100vw-2rem)] bg-white/5 backdrop-blur-2xl rounded-3xl shadow-2xl p-4 border border-white/10">
-              <div className="text-white font-bold mb-2">รายชื่อนักเรียนที่เข้าร่วมวันนี้</div>
+          {todayTestsOpen && (
+            <div
+              className="absolute z-50 top-full right-0 mt-3 w-[360px] max-w-[calc(100vw-2rem)] bg-white/5 backdrop-blur-2xl rounded-3xl shadow-2xl p-4 border border-white/10"
+              onMouseEnter={openTodayTests}
+              onMouseLeave={scheduleCloseTodayTests}
+            >
+              <div className="text-white font-bold mb-2">รายชื่อชุดคำถามที่มีสอบวันนี้</div>
 
-              {todayParticipantsLoading ? (
-                <div className="text-white/80">กำลังโหลดรายชื่อ…</div>
-              ) : (mergedTodayParticipants.length ? (
+              {todayTestsLoading ? (
+                <div className="text-white/80">กำลังโหลดรายการ…</div>
+              ) : ((Array.isArray(todayTests) && todayTests.length) ? (
                 <div className="max-h-72 overflow-y-auto space-y-2 pr-1">
-                  {mergedTodayParticipants.map((item, idx) => {
-                    const name = String(item?.name || '');
-                    const count = Number(item?.count) || 1;
-                    const timesText = `เข้าสอบ ${count} ครั้ง`;
-
+                  {todayTests.map((item, idx) => {
+                    const title = String(item?.title || item || '');
+                    if (!title) return null;
                     return (
-                      <div key={`${name}-${idx}`} className="bg-white/5 border border-white/10 rounded-2xl px-3 py-2 text-white flex items-center justify-between gap-3">
-                        <div className="font-semibold truncate">{name}</div>
-                        <div className="text-white/80 text-sm whitespace-nowrap">{timesText}</div>
+                      <div key={`${title}-${idx}`} className="bg-white/5 border border-white/10 rounded-2xl px-3 py-2 text-white">
+                        <div className="font-semibold truncate">{title}</div>
                       </div>
                     );
                   })}
                 </div>
               ) : (
-                <div className="text-white/80">ยังไม่มีนักเรียนเข้าร่วมวันนี้</div>
+                <div className="text-white/80">วันนี้ยังไม่มีการทดสอบ</div>
               ))}
             </div>
           )}

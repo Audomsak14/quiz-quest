@@ -1,5 +1,5 @@
 "use client";
-import React, { useEffect, useMemo, useState, useCallback } from "react";
+import React, { useEffect, useMemo, useRef, useState, useCallback } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import socketManager from "../lib/socket";
 import SpectatorSideScroller from "./SpectatorSideScroller";
@@ -40,6 +40,76 @@ export default function TeacherGameView() {
   const [gameResults, setGameResults] = useState(null);
   const [spectateOpen, setSpectateOpen] = useState(false);
   const [selectedPlayerId, setSelectedPlayerId] = useState(null);
+  const [leaderboardSnapshot, setLeaderboardSnapshot] = useState([]);
+  const leaderboardSnapshotRef = useRef([]);
+
+  const getGlobalSnapshot = useCallback(() => {
+    if (typeof window === 'undefined') return [];
+    const bag = window.__qqTeacherLeaderboardSnapshots;
+    if (!bag || !roomId) return [];
+    const rows = bag[String(roomId)];
+    return Array.isArray(rows) ? rows : [];
+  }, [roomId]);
+
+  const setGlobalSnapshot = useCallback((rows) => {
+    if (typeof window === 'undefined') return;
+    if (!roomId) return;
+    if (!Array.isArray(rows) || rows.length === 0) return;
+    if (!window.__qqTeacherLeaderboardSnapshots) window.__qqTeacherLeaderboardSnapshots = {};
+    window.__qqTeacherLeaderboardSnapshots[String(roomId)] = rows;
+  }, [roomId]);
+
+  // Keep leaderboard/students snapshot even if students leave, and even across teacher refresh
+  // (session-scoped only; clears when browser session ends)
+  useEffect(() => {
+    if (authStatus !== "ok") return;
+    if (!roomId) return;
+    if (typeof window === 'undefined') return;
+    try {
+      const key = `teacher_room_${roomId}_snapshot`;
+      const raw = sessionStorage.getItem(key);
+      if (!raw) return;
+      const parsed = JSON.parse(raw);
+      if (parsed?.students && Object.keys(students || {}).length === 0) {
+        setStudents(parsed.students);
+      }
+      if (parsed?.gameResults && !gameResults) {
+        setGameResults(parsed.gameResults);
+      }
+      if (Array.isArray(parsed?.leaderboardSnapshot) && leaderboardSnapshot.length === 0) {
+        setLeaderboardSnapshot(parsed.leaderboardSnapshot);
+      }
+    } catch {}
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [authStatus, roomId]);
+
+  useEffect(() => {
+    if (authStatus !== "ok") return;
+    if (!roomId) return;
+    if (typeof window === 'undefined') return;
+    try {
+      const key = `teacher_room_${roomId}_snapshot`;
+      const hasStudents = students && Object.keys(students).length > 0;
+      const hasGameResults = !!gameResults;
+      const hasLeaderboard = Array.isArray(leaderboardSnapshot) && leaderboardSnapshot.length > 0;
+
+      // Do not overwrite a previously-good snapshot with an empty one.
+      if (!hasStudents && !hasGameResults && !hasLeaderboard) return;
+
+      const snapshot = {
+        ts: Date.now(),
+        ...(hasStudents ? { students } : {}),
+        ...(hasGameResults ? { gameResults } : {}),
+        ...(hasLeaderboard ? { leaderboardSnapshot } : {}),
+      };
+
+      // Merge with existing snapshot so we keep older leaderboard if current state got cleared.
+      const existingRaw = sessionStorage.getItem(key);
+      const existing = existingRaw ? JSON.parse(existingRaw) : null;
+      const merged = { ...(existing || {}), ...snapshot };
+      sessionStorage.setItem(key, JSON.stringify(merged));
+    } catch {}
+  }, [authStatus, roomId, students, gameResults]);
 
   const rosterIdSet = useMemo(() => {
     const set = new Set();
@@ -69,20 +139,34 @@ export default function TeacherGameView() {
             setRosterIds(ids);
             const now = Date.now();
             setStudents((prev) => {
-              // Keep only players that are still in the room roster (kicked players disappear here).
-              const next = {};
-              ids.forEach((id) => {
-                if (prev?.[id]) next[id] = prev[id];
+              // Persist players even after they leave so teacher can still see scores/rankings.
+              // We keep a `left` flag instead of deleting entries.
+              const next = { ...(prev || {}) };
+
+              // Mark anyone not in roster as left (but keep their last known score).
+              const idSet = new Set(ids);
+              Object.keys(next).forEach((pid) => {
+                if (!idSet.has(String(pid))) {
+                  next[pid] = {
+                    ...(next[pid] || {}),
+                    left: true,
+                    leftAt: next[pid]?.leftAt || now,
+                  };
+                }
               });
+
+              // Upsert active roster players (left=false)
               data.room.players.forEach((p) => {
                 if (!p?.playerId) return;
-                // backend provides { playerId, name, role } (no x/y) => preserve x/y from prev
                 next[p.playerId] = {
                   ...(next[p.playerId] || {}),
                   ...p,
+                  left: false,
+                  leftAt: null,
                   lastSeen: now,
                 };
               });
+
               return next;
             });
           }
@@ -124,8 +208,10 @@ export default function TeacherGameView() {
           data.players.forEach((p) => {
             const pid = p?.playerId;
             if (!pid) return;
-            // If we already have a roster from /api/game/room, ignore players not in roster.
-            if (rosterIdSet.size > 0 && !rosterIdSet.has(String(pid))) return;
+            // If we already have a roster from /api/game/room, ignore players not in roster
+            // to avoid ghost entries. But when spectator is open, allow archived/left players
+            // so teacher can still watch their last-known position after they leave.
+            if (!spectateOpen && rosterIdSet.size > 0 && !rosterIdSet.has(String(pid))) return;
             next[pid] = {
               ...(next[pid] || {}),
               playerId: pid,
@@ -215,21 +301,41 @@ export default function TeacherGameView() {
       if (data?.status) setGameStarted(data.status === "active");
       if (typeof data?.competition !== 'undefined') setCompetitionMode(!!data.competition);
       if (Array.isArray(data?.players)) {
-        const obj = {};
-        data.players.forEach((p) => {
-          if (p.role !== 'teacher') obj[p.playerId] = { ...p, lastSeen: Date.now() };
+        const now = Date.now();
+        setStudents((prev) => {
+          const next = { ...(prev || {}) };
+          data.players.forEach((p) => {
+            if (p?.role === 'teacher') return;
+            if (!p?.playerId) return;
+            next[p.playerId] = { ...(next[p.playerId] || {}), ...p, left: false, leftAt: null, lastSeen: now };
+          });
+          return next;
         });
-        setStudents(obj);
       }
     };
 
     const onPlayerJoined = (p) => {
       if (p?.role === "teacher") return;
-      setStudents((prev) => ({ ...prev, [p.playerId]: { ...(prev[p.playerId] || {}), ...p, lastSeen: Date.now() } }));
+      setStudents((prev) => ({
+        ...prev,
+        [p.playerId]: {
+          ...(prev[p.playerId] || {}),
+          ...p,
+          left: false,
+          leftAt: null,
+          lastSeen: Date.now(),
+        },
+      }));
     };
 
     const onPlayerMoved = (p) => {
-      setStudents((prev) => ({ ...prev, [p.playerId]: { ...(prev[p.playerId] || {}), ...p, lastSeen: Date.now() } }));
+      const pid = p?.playerId;
+      if (!pid) return;
+      // Movement events don't carry name/role; avoid creating a ghost row with blank name.
+      setStudents((prev) => {
+        if (!prev?.[pid] && !p?.name) return prev;
+        return { ...prev, [pid]: { ...(prev[pid] || {}), ...p, lastSeen: Date.now() } };
+      });
     };
 
     const onGameStarted = () => {
@@ -250,10 +356,17 @@ export default function TeacherGameView() {
       const pid = payload?.playerId;
       if (!pid) return;
       setStudents((prev) => {
-        if (!prev[pid]) return prev;
-        const copy = { ...prev };
-        delete copy[pid];
-        return copy;
+        if (!prev?.[pid]) return prev;
+        const now = Date.now();
+        return {
+          ...prev,
+          [pid]: {
+            ...(prev[pid] || {}),
+            left: true,
+            leftAt: prev[pid]?.leftAt || now,
+            lastSeen: now,
+          },
+        };
       });
     };
 
@@ -326,9 +439,16 @@ export default function TeacherGameView() {
       // Optimistically remove from local list; polling will also reconcile.
       setStudents((prev) => {
         if (!prev || !prev[playerId]) return prev;
-        const copy = { ...prev };
-        delete copy[playerId];
-        return copy;
+        const now = Date.now();
+        return {
+          ...prev,
+          [playerId]: {
+            ...(prev[playerId] || {}),
+            left: true,
+            leftAt: prev[playerId]?.leftAt || now,
+            lastSeen: now,
+          },
+        };
       });
     } catch (e) {
       console.error('Kick failed', e);
@@ -374,8 +494,41 @@ export default function TeacherGameView() {
     return Array.from(byName.values());
   }, [students]);
 
+  // Spectator overlay should not show duplicate dots for the same student.
+  // This can happen when a client initially joins with a temporary playerId,
+  // then re-joins with a DB-backed roomPlayerId (old entry becomes left=true).
+  // For spectator, coalesce by display name and prefer active + most recent.
+  const spectatorPlayers = useMemo(() => {
+    const list = Object.values(students || {});
+    list.sort((a, b) => {
+      const leftDiff = Number(!!a?.left) - Number(!!b?.left); // active first
+      if (leftDiff !== 0) return leftDiff;
+      return (Number(b?.lastSeen) || 0) - (Number(a?.lastSeen) || 0);
+    });
+
+    const byKey = new Map();
+    for (const p of list) {
+      const nm = String(p?.name || '').trim();
+      const key = nm || String(p?.playerId || '').trim();
+      if (!key) continue;
+      if (!byKey.has(key)) byKey.set(key, p);
+    }
+
+    const obj = {};
+    for (const p of byKey.values()) {
+      if (!p?.playerId) continue;
+      obj[String(p.playerId)] = p;
+    }
+    return obj;
+  }, [students]);
+
   const displayedStudentIds = useMemo(
     () => (displayedStudents || []).map((s) => s.playerId).filter(Boolean),
+    [displayedStudents]
+  );
+
+  const activeDisplayedStudents = useMemo(
+    () => (displayedStudents || []).filter((s) => !s?.left),
     [displayedStudents]
   );
 
@@ -479,6 +632,43 @@ export default function TeacherGameView() {
     return rows;
   }, [displayedStudents, finalScoreByPlayerId, gameResults, rankByPlayerId]);
 
+  // Synchronous snapshot (avoids races where effects don't run before the next state update clears rows)
+  if (Array.isArray(leaderboardRows) && leaderboardRows.length > 0) {
+    leaderboardSnapshotRef.current = leaderboardRows;
+    setGlobalSnapshot(leaderboardRows);
+    // Also sync to sessionStorage immediately so it survives remounts in this tab/session.
+    try {
+      if (typeof window !== 'undefined' && roomId) {
+        const key = `teacher_room_${roomId}_snapshot`;
+        const existingRaw = window.sessionStorage.getItem(key);
+        const existing = existingRaw ? JSON.parse(existingRaw) : null;
+        const merged = { ...(existing || {}), ts: Date.now(), leaderboardSnapshot: leaderboardRows };
+        window.sessionStorage.setItem(key, JSON.stringify(merged));
+      }
+    } catch {}
+  }
+
+  // If we ever had leaderboard data, keep a snapshot so UI doesn't go blank when players exit.
+  useEffect(() => {
+    if (!Array.isArray(leaderboardRows) || leaderboardRows.length === 0) return;
+    setLeaderboardSnapshot(leaderboardRows);
+  }, [leaderboardRows]);
+
+  // Persist snapshot separately (so it survives teacher refresh within the same session)
+  useEffect(() => {
+    if (authStatus !== "ok") return;
+    if (!roomId) return;
+    if (typeof window === 'undefined') return;
+    if (!Array.isArray(leaderboardSnapshot) || leaderboardSnapshot.length === 0) return;
+    try {
+      const key = `teacher_room_${roomId}_snapshot`;
+      const existingRaw = sessionStorage.getItem(key);
+      const existing = existingRaw ? JSON.parse(existingRaw) : null;
+      const merged = { ...(existing || {}), ts: Date.now(), leaderboardSnapshot };
+      sessionStorage.setItem(key, JSON.stringify(merged));
+    } catch {}
+  }, [authStatus, roomId, leaderboardSnapshot]);
+
   const studentIds = useMemo(() => Object.keys(students || {}), [students]);
   const cycleSelection = useCallback((dir) => {
     const activeIds = displayedStudentIds.length ? displayedStudentIds : studentIds;
@@ -534,7 +724,8 @@ export default function TeacherGameView() {
 
             <button
               onClick={() => { setSpectateOpen(true); setSelectedPlayerId((displayedStudentIds[0] || studentIds[0]) || null); }}
-              disabled={!isConnected || (displayedStudentIds.length === 0 && studentIds.length === 0)}
+              // Disable spectator when there are no active (in-game) students.
+              disabled={!isConnected || activeDisplayedStudents.length === 0}
               className="bg-gradient-to-r from-indigo-500 to-purple-500 hover:from-indigo-600 hover:to-purple-600 disabled:opacity-50 text-white font-bold py-3 px-6 rounded-2xl transition-all duration-300 transform hover:scale-[1.03] shadow-lg"
             >👀 โหมดผู้ชม</button>
 
@@ -550,12 +741,12 @@ export default function TeacherGameView() {
       <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-6 mb-6">
         {/* Students */}
         <div className="bg-white/90 backdrop-blur-xl rounded-3xl shadow-xl p-6 border border-white/30">
-          <h3 className="text-xl font-bold text-gray-800 mb-4 flex items-center"><span className="text-2xl mr-2">👥</span>นักเรียนในห้อง ({displayedStudents.length})</h3>
+          <h3 className="text-xl font-bold text-gray-800 mb-4 flex items-center"><span className="text-2xl mr-2">👥</span>นักเรียนในห้อง ({activeDisplayedStudents.length})</h3>
           <div className="space-y-3">
-            {displayedStudents.length === 0 ? (
+            {activeDisplayedStudents.length === 0 ? (
               <p className="text-gray-500 text-center py-4">ยังไม่มีนักเรียนเข้าร่วม</p>
             ) : (
-              displayedStudents.map((s) => (
+              activeDisplayedStudents.map((s) => (
                 <div key={s.playerId} className="bg-gradient-to-r from-blue-50 to-indigo-50 rounded-2xl p-4 flex items-center justify-between border border-indigo-100 hover:shadow-lg transition-shadow">
                   <div className="flex items-center space-x-3">
                     <div className="relative w-10 h-10 bg-gradient-to-br from-blue-500 to-purple-500 rounded-xl flex items-center justify-center shadow border border-white/60">
@@ -566,11 +757,25 @@ export default function TeacherGameView() {
                     </div>
                   </div>
                   <div className="flex items-center gap-2">
-                    <div className={`text-xs px-3 py-1 rounded-full font-medium ${finishedIdSet.has(String(s.playerId)) ? "bg-sky-100 text-sky-700" : (gameStarted ? "bg-emerald-100 text-emerald-700" : "bg-amber-100 text-amber-700")}`}
-                    >{finishedIdSet.has(String(s.playerId)) ? "✅ เล่นเสร็จแล้ว" : (gameStarted ? "🎮 กำลังเล่น" : "⏳ รอเริ่มเกม")}</div>
+                    <div
+                      className={`text-xs px-3 py-1 rounded-full font-medium ${
+                        s?.left
+                          ? "bg-slate-100 text-slate-700"
+                          : (finishedIdSet.has(String(s.playerId))
+                            ? "bg-sky-100 text-sky-700"
+                            : (gameStarted ? "bg-emerald-100 text-emerald-700" : "bg-amber-100 text-amber-700"))
+                      }`}
+                    >
+                      {s?.left
+                        ? "🚪 ออกแล้ว"
+                        : (finishedIdSet.has(String(s.playerId))
+                          ? "✅ เล่นเสร็จแล้ว"
+                          : (gameStarted ? "🎮 กำลังเล่น" : "⏳ รอเริ่มเกม"))}
+                    </div>
                     <button
                       onClick={() => kickStudent(String(s.playerId))}
-                      className="text-sm px-3 py-1 rounded-xl bg-rose-100 text-rose-700 border border-rose-200 hover:bg-rose-200"
+                      disabled={!!s?.left}
+                      className="text-sm px-3 py-1 rounded-xl bg-rose-100 text-rose-700 border border-rose-200 hover:bg-rose-200 disabled:opacity-50 disabled:cursor-not-allowed"
                     >เตะ</button>
                   </div>
                 </div>
@@ -582,32 +787,49 @@ export default function TeacherGameView() {
         {/* Leaderboard */}
         <div className="bg-white/90 backdrop-blur-xl rounded-3xl shadow-xl p-6 border border-white/30">
           <h3 className="text-xl font-bold text-gray-800 mb-4 flex items-center"><span className="text-2xl mr-2">🏆</span>อันดับคะแนน</h3>
-          {leaderboardRows.length === 0 ? (
-            <p className="text-gray-500 text-center py-4">ยังไม่มีข้อมูลคะแนน</p>
-          ) : (
-            <div className="space-y-2 max-h-80 overflow-y-auto pr-1">
-              {leaderboardRows.map((r, i) => {
-                const rk = Number(r.rank) || (i + 1);
-                const secs = (r?.completionTime != null && Number.isFinite(Number(r?.completionTime)))
-                  ? (Number(r.completionTime) / 1000).toFixed(1)
-                  : '—';
-                return (
-                  <div key={`${r.playerId}-${i}`} className="bg-gradient-to-r from-yellow-50 to-orange-50 rounded-xl p-3 flex items-center justify-between border border-amber-100 shadow">
-                    <div className="flex items-center space-x-3">
-                      <div className="w-9 h-9 rounded-full bg-yellow-400 text-white font-bold flex items-center justify-center shadow">
-                        {rk <= 3 ? ['🥇', '🥈', '🥉'][rk - 1] : rk}
+            {(() => {
+            const refRows = Array.isArray(leaderboardSnapshotRef.current) ? leaderboardSnapshotRef.current : [];
+            const globalRows = getGlobalSnapshot();
+            let storageRows = [];
+            try {
+              if (typeof window !== 'undefined' && roomId) {
+                const key = `teacher_room_${roomId}_snapshot`;
+                const raw = window.sessionStorage.getItem(key);
+                const parsed = raw ? JSON.parse(raw) : null;
+                if (Array.isArray(parsed?.leaderboardSnapshot)) storageRows = parsed.leaderboardSnapshot;
+              }
+            } catch {}
+            const rowsToShow = (leaderboardRows && leaderboardRows.length)
+              ? leaderboardRows
+              : (refRows.length ? refRows : (globalRows.length ? globalRows : (storageRows.length ? storageRows : (leaderboardSnapshot || []))));
+              if (rowsToShow.length === 0) {
+                return <p className="text-gray-500 text-center py-4">ยังไม่มีข้อมูลคะแนน</p>;
+              }
+              return (
+                <div className="space-y-2 max-h-80 overflow-y-auto pr-1">
+                  {rowsToShow.map((r, i) => {
+                    const rk = Number(r.rank) || (i + 1);
+                    const secs = (r?.completionTime != null && Number.isFinite(Number(r?.completionTime)))
+                      ? (Number(r.completionTime) / 1000).toFixed(1)
+                      : '—';
+                    return (
+                      <div key={`${r.playerId}-${i}`} className="bg-gradient-to-r from-yellow-50 to-orange-50 rounded-xl p-3 flex items-center justify-between border border-amber-100 shadow">
+                        <div className="flex items-center space-x-3">
+                          <div className="w-9 h-9 rounded-full bg-yellow-400 text-white font-bold flex items-center justify-center shadow">
+                            {rk <= 3 ? ['🥇', '🥈', '🥉'][rk - 1] : rk}
+                          </div>
+                          <div>
+                            <div className="font-bold text-gray-800">{r.playerName}</div>
+                            <div className="text-xs text-gray-600">ใช้เวลา: {secs} วินาที</div>
+                          </div>
+                        </div>
+                        <div className="text-lg font-extrabold text-emerald-700">{Number(r.finalScore) || 0} คะแนน</div>
                       </div>
-                      <div>
-                        <div className="font-bold text-gray-800">{r.playerName}</div>
-                        <div className="text-xs text-gray-600">ใช้เวลา: {secs} วินาที</div>
-                      </div>
-                    </div>
-                    <div className="text-lg font-extrabold text-emerald-700">{Number(r.finalScore) || 0} คะแนน</div>
-                  </div>
-                );
-              })}
-            </div>
-          )}
+                    );
+                  })}
+                </div>
+              );
+            })()}
         </div>
 
         {/* Status */}
@@ -664,7 +886,7 @@ export default function TeacherGameView() {
       {spectateOpen && (
         <SpectatorSideScroller
           roomId={roomId}
-          players={students}
+          players={spectatorPlayers}
           questions={roomInfo?.questions || []}
           selectedPlayerId={selectedPlayerId}
           onClose={() => setSpectateOpen(false)}

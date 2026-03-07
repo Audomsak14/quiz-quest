@@ -152,6 +152,13 @@ const initializeSocketServer = (httpServer) => {
       const name = String(payload.name || payload.playerName || 'Player').trim() || 'Player';
       const playerId = String(payload.playerId || `${name}_${socket.id}`);
 
+      // Prevent ghost/duplicate players when the same socket re-joins with a different playerId
+      // (e.g., when the client later resolves a DB-backed roomPlayerId and re-joins).
+      const previous = socketIndex.get(socket.id);
+      if (previous && (previous.roomId !== roomId || previous.playerId !== playerId)) {
+        removePlayerFromRoom(io, previous.roomId, previous.playerId, 'rejoined');
+      }
+
       socket.join(roomChannel(roomId));
 
       const existing = room.players.get(playerId);

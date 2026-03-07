@@ -89,6 +89,10 @@ const gameStateSchema = z.object({
 	ts: z.coerce.number().int().nonnegative().optional(),
 });
 
+const teacherDeleteTodayParticipantSchema = z.object({
+	name: z.string().trim().min(1),
+});
+
 router.post('/auth/register', validateBody(registerSchema), authController.register);
 router.post('/auth/login', validateBody(loginSchema), authController.login);
 
@@ -121,5 +125,7 @@ router.get('/game/state/:roomId', validateParams(idParamSchema), gameController.
 
 router.get('/teacher/dashboard', requireAuth, teacherController.dashboard);
 router.get('/teacher/today-participants', requireAuth, teacherController.todayParticipants);
+router.get('/teacher/today-tests', requireAuth, teacherController.todayTests);
+router.post('/teacher/today-participants/delete', requireAuth, validateBody(teacherDeleteTodayParticipantSchema), teacherController.deleteTodayParticipant);
 
 module.exports = router;

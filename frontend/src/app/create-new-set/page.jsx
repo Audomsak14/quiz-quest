@@ -18,7 +18,7 @@ function CreateNewSetContent() {
   const [timePerQuestion, setTimePerQuestion] = useState(30);
   const [isLoading, setIsLoading] = useState(false);
   const [selectedQuestionIndex, setSelectedQuestionIndex] = useState(0);
-  const [selectedMap, setSelectedMap] = useState("/map1.png"); // default map
+  const [selectedMap, setSelectedMap] = useState("/map2.png"); // default map
 
   useEffect(() => {
     if (editId) {
@@ -42,7 +42,9 @@ function CreateNewSetContent() {
       // กรณี backend เก็บคะแนนต่อข้อในแต่ละคำถาม ใช้ค่าของข้อแรกเป็นค่าเริ่มต้น
       setScorePerQuestion(res.data.questions?.[0]?.points ?? 1);
       setTimePerQuestion(res.data.timeLimit ?? 30);
-      setSelectedMap(res.data.map || "/map1.png");
+      const loadedMap = res.data.map || "/map2.png";
+      // Legacy support: Forest (/map1.png) was removed; treat it as Sea.
+      setSelectedMap(loadedMap === "/map1.png" ? "/map2.png" : loadedMap);
     } catch (err) {
       console.error("Error fetching question set:", err);
     }
@@ -369,7 +371,6 @@ function CreateNewSetContent() {
                 onChange={e => setSelectedMap(e.target.value)}
                 className="w-full p-3 border border-white/20 rounded-xl text-white font-semibold bg-white/10 backdrop-blur-sm hover:bg-white/20 cursor-pointer mb-3 focus:ring-2 focus:ring-pink-400 focus:border-transparent transition-all duration-300"
               >
-                <option value="/map1.png" className="bg-gray-800">แมพป่า (Forest)</option>
                 <option value="/map2.png" className="bg-gray-800">แมพทะเล (Sea)</option>
                 <option value="/map3.png" className="bg-gray-800">แมพเมือง (City)</option>
               </select>

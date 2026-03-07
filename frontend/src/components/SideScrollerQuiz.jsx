@@ -26,6 +26,13 @@ export default function SideScrollerQuiz() {
   const router = useRouter();
   const searchParams = useSearchParams();
 
+  const deriveMapVariant = (mapValue) => {
+    const raw = String(mapValue || '').trim().toLowerCase();
+    if (!raw) return 'sea';
+    if (raw.includes('map3') || raw.includes('city')) return 'city';
+    return 'sea';
+  };
+
   // Prevent page scroll while in game view
   useEffect(() => {
     const prevBodyOverflow = document.body.style.overflow;
@@ -66,6 +73,12 @@ export default function SideScrollerQuiz() {
   });
   const [providedPlayerId] = useState(() => searchParams.get("playerId") || profileStorage.ensureId(playerName) || null);
   const role = "student";
+  const [mapVariant, setMapVariant] = useState('sea');
+  const mapVariantRef = useRef('sea');
+
+  useEffect(() => {
+    mapVariantRef.current = mapVariant;
+  }, [mapVariant]);
   const [roomPlayerId, setRoomPlayerId] = useState(() => {
     if (typeof window === 'undefined') return null;
     try { return window.sessionStorage.getItem(`qq:roomPlayerId:${roomId}:${playerName}`) || null; } catch { return null; }
@@ -99,6 +112,7 @@ export default function SideScrollerQuiz() {
           try {
             const rr = await fetch(`http://localhost:5000/api/game/room/${roomId}`);
             const rd = await rr.json().catch(() => null);
+            try { setMapVariant(deriveMapVariant(rd?.room?.questionSetMap || rd?.room?.questionSet?.map)); } catch {}
             const list = Array.isArray(rd?.room?.players) ? rd.room.players : [];
             const target = list.find((p) => (String(p?.name || '').trim().toLowerCase() === String(playerName).trim().toLowerCase()));
             if (target?.playerId) {
@@ -450,10 +464,14 @@ export default function SideScrollerQuiz() {
     let gotRoomState = false;
     if (!roomId || !playerName) return;
 
+    // Prefer the DB-backed roomPlayerId (used by /api/game/room) as the socket playerId,
+    // so teacher/spectator views and socket state refer to the same player consistently.
+    const socketPlayerId = roomPlayerId || providedPlayerId;
+
     socketManager.connect();
 
     socketManager.on("connected", () => {
-      const ok = socketManager.joinRoom(roomId, playerName, role, providedPlayerId);
+      const ok = socketManager.joinRoom(roomId, playerName, role, socketPlayerId);
       setIsConnected(ok);
       try {
         const pos = posRef.current;
@@ -524,7 +542,7 @@ export default function SideScrollerQuiz() {
     }, 2000);
 
     return () => { clearTimeout(failSafe); socketManager.disconnect(); setIsConnected(false); };
-  }, [roomId, playerName, role, providedPlayerId]);
+  }, [roomId, playerName, role, providedPlayerId, roomPlayerId]);
 
   // Failsafe: Poll room status; if not active, force back to lobby
   useEffect(() => {
@@ -536,6 +554,11 @@ export default function SideScrollerQuiz() {
         if (!roomId) return;
         const r = await fetch(`http://localhost:5000/api/game/room/${roomId}`);
         const data = await r.json();
+        try {
+          if (!cancelled) {
+            setMapVariant(deriveMapVariant(data?.room?.questionSetMap || data?.room?.questionSet?.map));
+          }
+        } catch {}
         const status = data?.room?.status || data?.status;
         // If we are no longer present in the room roster, treat as kicked.
         const roster = Array.isArray(data?.room?.players) ? data.room.players : [];
@@ -783,143 +806,237 @@ export default function SideScrollerQuiz() {
       const ctx = canvas.getContext("2d");
       const cam = cameraXRef.current; const pos = posRef.current;
 
-      // sky (soft gradient + horizon haze)
-      {
-        const g = ctx.createLinearGradient(0, 0, 0, VIEW_H);
-        g.addColorStop(0, "#9cd3ff");
-        g.addColorStop(0.55, "#9cd3ff");
-        // warm beach horizon tint (reuse existing palette via rgba)
-        g.addColorStop(0.78, "rgba(245,158,11,0.18)");
-        g.addColorStop(0.92, "rgba(239,68,68,0.08)");
-        g.addColorStop(1, "rgba(255,255,255,0.18)");
-        ctx.fillStyle = g;
-        ctx.fillRect(0, 0, VIEW_W, VIEW_H);
-        // haze band near horizon
-        ctx.fillStyle = "rgba(255,255,255,0.22)";
-        ctx.fillRect(0, GROUND_Y - 220, VIEW_W, 180);
-      }
+      const isCity = mapVariantRef.current === 'city';
 
-      // sun (parallax)
-      {
-        const sunX = (VIEW_W * 0.18) - (cam * 0.06);
-        const sunY = VIEW_H * 0.18;
-        ctx.save();
-        const glow = ctx.createRadialGradient(sunX, sunY, 8, sunX, sunY, 75);
-        glow.addColorStop(0, "rgba(245,158,11,0.55)");
-        glow.addColorStop(1, "rgba(245,158,11,0)");
-        ctx.fillStyle = glow;
-        ctx.beginPath(); ctx.arc(sunX, sunY, 75, 0, Math.PI * 2); ctx.fill();
-        ctx.fillStyle = "#f59e0b";
-        ctx.beginPath(); ctx.arc(sunX, sunY, 22, 0, Math.PI * 2); ctx.fill();
-        ctx.restore();
-      }
+      if (!isCity) {
+        // SEA MAP (existing look)
 
-      // clouds (simple, static; parallax)
-      {
-        const drawCloud = (cx, cy, s) => {
+        // sky (soft gradient + horizon haze)
+        {
+          const g = ctx.createLinearGradient(0, 0, 0, VIEW_H);
+          g.addColorStop(0, "#9cd3ff");
+          g.addColorStop(0.55, "#9cd3ff");
+          // warm beach horizon tint (reuse existing palette via rgba)
+          g.addColorStop(0.78, "rgba(245,158,11,0.18)");
+          g.addColorStop(0.92, "rgba(239,68,68,0.08)");
+          g.addColorStop(1, "rgba(255,255,255,0.18)");
+          ctx.fillStyle = g;
+          ctx.fillRect(0, 0, VIEW_W, VIEW_H);
+          // haze band near horizon
+          ctx.fillStyle = "rgba(255,255,255,0.22)";
+          ctx.fillRect(0, GROUND_Y - 220, VIEW_W, 180);
+        }
+
+        // sun (parallax)
+        {
+          const sunX = (VIEW_W * 0.18) - (cam * 0.06);
+          const sunY = VIEW_H * 0.18;
           ctx.save();
-          ctx.globalAlpha = 0.85;
-          ctx.fillStyle = "#ffffff";
-          ctx.beginPath();
-          ctx.ellipse(cx - 18 * s, cy + 2 * s, 16 * s, 10 * s, 0, 0, Math.PI * 2);
-          ctx.ellipse(cx, cy, 22 * s, 14 * s, 0, 0, Math.PI * 2);
-          ctx.ellipse(cx + 20 * s, cy + 3 * s, 14 * s, 9 * s, 0, 0, Math.PI * 2);
-          ctx.fill();
+          const glow = ctx.createRadialGradient(sunX, sunY, 8, sunX, sunY, 75);
+          glow.addColorStop(0, "rgba(245,158,11,0.55)");
+          glow.addColorStop(1, "rgba(245,158,11,0)");
+          ctx.fillStyle = glow;
+          ctx.beginPath(); ctx.arc(sunX, sunY, 75, 0, Math.PI * 2); ctx.fill();
+          ctx.fillStyle = "#f59e0b";
+          ctx.beginPath(); ctx.arc(sunX, sunY, 22, 0, Math.PI * 2); ctx.fill();
           ctx.restore();
-        };
-
-        const cloudPar = 0.18;
-        const base = -((cam * cloudPar) % 900);
-        for (let i = -1; i < 6; i++) {
-          const x = base + (i * 900) + 180;
-          drawCloud(x, 90, 1.15);
-          drawCloud(x + 260, 140, 0.95);
         }
-      }
 
-      // distant islands near horizon (parallax)
-      {
-        const par = 0.08;
-        const start = -((cam * par) % 800) - 800;
-        const y = GROUND_Y - 170;
-        ctx.save();
-        ctx.fillStyle = "rgba(17,24,39,0.10)"; // based on #111827
-        for (let i = 0; i < 7; i++) {
-          const x = start + i * 800;
-          ctx.beginPath();
-          ctx.ellipse(x + 260, y + 60, 240, 55, 0, 0, Math.PI * 2);
-          ctx.ellipse(x + 520, y + 70, 200, 45, 0, 0, Math.PI * 2);
-          ctx.fill();
+        // clouds (simple, static; parallax)
+        {
+          const drawCloud = (cx, cy, s) => {
+            ctx.save();
+            ctx.globalAlpha = 0.85;
+            ctx.fillStyle = "#ffffff";
+            ctx.beginPath();
+            ctx.ellipse(cx - 18 * s, cy + 2 * s, 16 * s, 10 * s, 0, 0, Math.PI * 2);
+            ctx.ellipse(cx, cy, 22 * s, 14 * s, 0, 0, Math.PI * 2);
+            ctx.ellipse(cx + 20 * s, cy + 3 * s, 14 * s, 9 * s, 0, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.restore();
+          };
+
+          const cloudPar = 0.18;
+          const base = -((cam * cloudPar) % 900);
+          for (let i = -1; i < 6; i++) {
+            const x = base + (i * 900) + 180;
+            drawCloud(x, 90, 1.15);
+            drawCloud(x + 260, 140, 0.95);
+          }
         }
-        ctx.restore();
-      }
 
-      // ocean (gradient + waves)
-      {
-        const oceanTop = GROUND_Y - 160;
-        const oceanBottom = GROUND_Y - 10;
-        const sea = ctx.createLinearGradient(0, oceanTop, 0, oceanBottom);
-        sea.addColorStop(0, "rgba(156,211,255,0.92)");
-        sea.addColorStop(0.55, "rgba(156,211,255,0.80)");
-        sea.addColorStop(1, "rgba(52,211,153,0.30)"); // based on #34d399
-        ctx.fillStyle = sea;
-        ctx.fillRect(0, oceanTop, VIEW_W, oceanBottom - oceanTop);
+        // distant islands near horizon (parallax)
+        {
+          const par = 0.08;
+          const start = -((cam * par) % 800) - 800;
+          const y = GROUND_Y - 170;
+          ctx.save();
+          ctx.fillStyle = "rgba(17,24,39,0.10)"; // based on #111827
+          for (let i = 0; i < 7; i++) {
+            const x = start + i * 800;
+            ctx.beginPath();
+            ctx.ellipse(x + 260, y + 60, 240, 55, 0, 0, Math.PI * 2);
+            ctx.ellipse(x + 520, y + 70, 200, 45, 0, 0, Math.PI * 2);
+            ctx.fill();
+          }
+          ctx.restore();
+        }
 
-        // wave lines (parallax)
-        const wavePar = 0.20;
-        const base = -((cam * wavePar) % 260);
-        for (let r = 0; r < 5; r++) {
-          const y = oceanTop + 28 + r * 26;
-          ctx.strokeStyle = "rgba(255,255,255,0.30)";
-          ctx.lineWidth = 2;
+        // ocean (gradient + waves)
+        {
+          const oceanTop = GROUND_Y - 160;
+          const oceanBottom = GROUND_Y - 10;
+          const sea = ctx.createLinearGradient(0, oceanTop, 0, oceanBottom);
+          sea.addColorStop(0, "rgba(156,211,255,0.92)");
+          sea.addColorStop(0.55, "rgba(156,211,255,0.80)");
+          sea.addColorStop(1, "rgba(52,211,153,0.30)"); // based on #34d399
+          ctx.fillStyle = sea;
+          ctx.fillRect(0, oceanTop, VIEW_W, oceanBottom - oceanTop);
+
+          // wave lines (parallax)
+          const wavePar = 0.20;
+          const base = -((cam * wavePar) % 260);
+          for (let r = 0; r < 5; r++) {
+            const y = oceanTop + 28 + r * 26;
+            ctx.strokeStyle = "rgba(255,255,255,0.30)";
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            for (let i = -1; i < 8; i++) {
+              const x = base + i * 260;
+              ctx.moveTo(x, y);
+              ctx.quadraticCurveTo(x + 65, y - 6, x + 130, y);
+              ctx.quadraticCurveTo(x + 195, y + 6, x + 260, y);
+            }
+            ctx.stroke();
+          }
+        }
+
+        // shoreline foam
+        {
+          const foamY = GROUND_Y - 14;
+          const par = 0.25;
+          const base = -((cam * par) % 220);
+          ctx.strokeStyle = "rgba(255,255,255,0.55)";
+          ctx.lineWidth = 3;
           ctx.beginPath();
-          for (let i = -1; i < 8; i++) {
-            const x = base + i * 260;
-            ctx.moveTo(x, y);
-            ctx.quadraticCurveTo(x + 65, y - 6, x + 130, y);
-            ctx.quadraticCurveTo(x + 195, y + 6, x + 260, y);
+          for (let i = -1; i < 10; i++) {
+            const x = base + i * 220;
+            ctx.moveTo(x, foamY);
+            ctx.quadraticCurveTo(x + 55, foamY - 8, x + 110, foamY);
+            ctx.quadraticCurveTo(x + 165, foamY + 8, x + 220, foamY);
           }
           ctx.stroke();
         }
-      }
-
-      // shoreline foam
-      {
-        const foamY = GROUND_Y - 14;
-        const par = 0.25;
-        const base = -((cam * par) % 220);
-        ctx.strokeStyle = "rgba(255,255,255,0.55)";
-        ctx.lineWidth = 3;
-        ctx.beginPath();
-        for (let i = -1; i < 10; i++) {
-          const x = base + i * 220;
-          ctx.moveTo(x, foamY);
-          ctx.quadraticCurveTo(x + 55, foamY - 8, x + 110, foamY);
-          ctx.quadraticCurveTo(x + 165, foamY + 8, x + 220, foamY);
+      } else {
+        // CITY MAP (simple skyline + road)
+        {
+          const g = ctx.createLinearGradient(0, 0, 0, VIEW_H);
+          g.addColorStop(0, "#c7d2fe");
+          g.addColorStop(0.55, "#93c5fd");
+          g.addColorStop(1, "rgba(255,255,255,0.18)");
+          ctx.fillStyle = g;
+          ctx.fillRect(0, 0, VIEW_W, VIEW_H);
         }
-        ctx.stroke();
+
+        // sun (cooler)
+        {
+          const sunX = (VIEW_W * 0.78) - (cam * 0.05);
+          const sunY = VIEW_H * 0.20;
+          ctx.save();
+          const glow = ctx.createRadialGradient(sunX, sunY, 8, sunX, sunY, 70);
+          glow.addColorStop(0, "rgba(99,102,241,0.22)");
+          glow.addColorStop(1, "rgba(99,102,241,0)");
+          ctx.fillStyle = glow;
+          ctx.beginPath(); ctx.arc(sunX, sunY, 70, 0, Math.PI * 2); ctx.fill();
+          ctx.fillStyle = "rgba(255,255,255,0.75)";
+          ctx.beginPath(); ctx.arc(sunX, sunY, 18, 0, Math.PI * 2); ctx.fill();
+          ctx.restore();
+        }
+
+        // skyline (parallax)
+        {
+          const par = 0.12;
+          const base = -((cam * par) % 520) - 520;
+          const horizonY = GROUND_Y - 220;
+          ctx.save();
+          ctx.fillStyle = "rgba(17,24,39,0.18)";
+          for (let i = 0; i < 10; i++) {
+            const x = base + i * 520;
+            const w1 = 110;
+            const w2 = 80;
+            const h1 = 160;
+            const h2 = 120;
+            ctx.fillRect(x + 40, horizonY + 60, w1, h1);
+            ctx.fillRect(x + 180, horizonY + 90, w2, h2);
+            ctx.fillRect(x + 290, horizonY + 70, 95, 150);
+          }
+          // haze
+          ctx.fillStyle = "rgba(255,255,255,0.16)";
+          ctx.fillRect(0, horizonY + 120, VIEW_W, 120);
+          ctx.restore();
+        }
+
+        // road/ground
+        {
+          ctx.fillStyle = "rgba(31,41,55,0.80)"; // based on #1f2937
+          ctx.fillRect(0, GROUND_Y - 2, VIEW_W, VIEW_H - (GROUND_Y - 2));
+          // lane markings (parallax)
+          const par = 0.35;
+          const base = -((cam * par) % 220);
+          ctx.strokeStyle = "rgba(255,255,255,0.60)";
+          ctx.lineWidth = 4;
+          ctx.setLineDash([26, 18]);
+          ctx.beginPath();
+          ctx.moveTo(base, GROUND_Y + 55);
+          ctx.lineTo(VIEW_W + 220, GROUND_Y + 55);
+          ctx.stroke();
+          ctx.setLineDash([]);
+        }
       }
 
       // ground
       {
-        const sand = ctx.createLinearGradient(0, GROUND_Y, 0, VIEW_H);
-        sand.addColorStop(0, "rgba(245,158,11,0.32)");
-        sand.addColorStop(1, "rgba(245,158,11,0.55)");
-        ctx.fillStyle = sand;
-        ctx.fillRect(0 - cam, GROUND_Y, worldW, GROUND_H);
+        if (mapVariantRef.current === 'city') {
+          // asphalt
+          ctx.fillStyle = "rgba(31,41,55,0.85)"; // based on #1f2937
+          ctx.fillRect(0 - cam, GROUND_Y, worldW, GROUND_H);
 
-        // sand ripples (parallax)
-        ctx.fillStyle = "rgba(17,24,39,0.06)";
-        for (let gx = Math.floor(cam / 90) * 90 - 240; gx < cam + VIEW_W + 240; gx += 90) {
-          ctx.fillRect(gx - cam, GROUND_Y + 18, 50, 3);
-          ctx.fillRect(gx - cam + 24, GROUND_Y + 38, 70, 3);
-        }
-        // tiny sparkles/shell dots
-        ctx.fillStyle = "rgba(255,255,255,0.25)";
-        for (let i = 0; i < 28; i++) {
-          const x = ((i * 97) % (VIEW_W + 120)) - 60 - ((cam * 0.35) % 97);
-          const y = GROUND_Y + 24 + ((i * 31) % Math.max(40, GROUND_H - 28));
-          ctx.fillRect(x, y, 2, 2);
+          // subtle road texture (parallax)
+          ctx.fillStyle = "rgba(255,255,255,0.06)";
+          for (let gx = Math.floor(cam / 120) * 120 - 240; gx < cam + VIEW_W + 240; gx += 120) {
+            ctx.fillRect(gx - cam, GROUND_Y + 22, 60, 2);
+            ctx.fillRect(gx - cam + 18, GROUND_Y + 44, 80, 2);
+          }
+
+          // lane markings (world-relative)
+          ctx.strokeStyle = "rgba(255,255,255,0.45)";
+          ctx.lineWidth = 4;
+          ctx.setLineDash([26, 18]);
+          ctx.beginPath();
+          ctx.moveTo(0 - cam, GROUND_Y + 58);
+          ctx.lineTo(worldW - cam, GROUND_Y + 58);
+          ctx.stroke();
+          ctx.setLineDash([]);
+        } else {
+          const sand = ctx.createLinearGradient(0, GROUND_Y, 0, VIEW_H);
+          sand.addColorStop(0, "rgba(245,158,11,0.32)");
+          sand.addColorStop(1, "rgba(245,158,11,0.55)");
+          ctx.fillStyle = sand;
+          ctx.fillRect(0 - cam, GROUND_Y, worldW, GROUND_H);
+
+          // sand ripples (parallax)
+          ctx.fillStyle = "rgba(17,24,39,0.06)";
+          for (let gx = Math.floor(cam / 90) * 90 - 240; gx < cam + VIEW_W + 240; gx += 90) {
+            ctx.fillRect(gx - cam, GROUND_Y + 18, 50, 3);
+            ctx.fillRect(gx - cam + 24, GROUND_Y + 38, 70, 3);
+          }
+          // tiny sparkles/shell dots
+          ctx.fillStyle = "rgba(255,255,255,0.25)";
+          for (let i = 0; i < 28; i++) {
+            const x = ((i * 97) % (VIEW_W + 120)) - 60 - ((cam * 0.35) % 97);
+            const y = GROUND_Y + 24 + ((i * 31) % Math.max(40, GROUND_H - 28));
+            ctx.fillRect(x, y, 2, 2);
+          }
         }
       }
 
@@ -1295,7 +1412,7 @@ export default function SideScrollerQuiz() {
 
   // Answer selection
   const submitCompletion = useCallback(async ({ finalScore, elapsedMs, answeredCount }) => {
-    const playerId = socketManager.getPlayerId() || providedPlayerId || null;
+    const playerId = roomPlayerId || socketManager.getPlayerId() || providedPlayerId || null;
     const fallback = {
       roomId,
       rankings: [
@@ -1357,9 +1474,13 @@ export default function SideScrollerQuiz() {
 
       // Try socket path (if there is a socket.io server). If not, fall back to REST.
       const sent = socketManager.completeGame(finalScore, elapsedMs, answeredCount);
-      if (!sent) {
-        void submitCompletion({ finalScore, elapsedMs, answeredCount });
-      }
+
+      // Always also persist via REST so teacher can reliably read score + completion time
+      // even when Socket.IO is running and the student later leaves the room.
+      void submitCompletion({ finalScore, elapsedMs, answeredCount });
+
+      // (Keep socket path for realtime teacher updates)
+      void sent;
     }
   }, [currentQuestion, answeredStatus, playerProgress, questionSpots.length, gameStartTime, submitCompletion, timeUp]);
 

@@ -87,6 +87,7 @@ const gameService = {
 		return {
 			...mapRoom(room),
 			questionSetTitle: room.questionSet?.title || null,
+			questionSetMap: room.questionSet?.map || null,
 			players: room.players.map((player) => ({
 				playerId: toMongoLikeId(player.id),
 				name: player.name,

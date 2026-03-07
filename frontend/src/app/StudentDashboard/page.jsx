@@ -148,19 +148,25 @@ export default function StudentDashboard() {
   useEffect(() => {
     if (!isClient) return;
 
+    const buildHistoryQuery = () => {
+      // IMPORTANT: backend stores attempts under DB-backed playerId (numeric string) and/or playerName.
+      // profileStorage.getId() is a local qq-* id and won't match attempts.
+      const { username } = getAuthSession();
+      const name = username || profileStorage.getName() || playerName || '';
+      const params = new URLSearchParams();
+      if (name) params.set('name', name);
+      return params;
+    };
+
     const run = async () => {
       setHistoryLoading(true);
       setHistoryError('');
       try {
-        const id = profileStorage.getId();
-        const name = profileStorage.getName() || playerName || '';
-        if (!id && !name) {
+        const params = buildHistoryQuery();
+        if (![...params.keys()].length) {
           setHistory({ summary: { totalTests: 0, totalAttempts: 0, averageScore: 0, bestScore: 0 }, attempts: [] });
           return;
         }
-        const params = new URLSearchParams();
-        if (id) params.set('playerId', id);
-        if (name) params.set('name', name);
         const qs = params.toString();
         const r = await fetch(`http://localhost:5000/api/game/history?${qs}&limit=200`, { cache: 'no-store' });
         const data = await r.json();
@@ -185,14 +191,13 @@ export default function StudentDashboard() {
     setHistoryLoading(true);
     setHistoryError('');
     try {
-      const id = profileStorage.getId();
-      const name = profileStorage.getName() || playerName || '';
-      if (!id && !name) {
+      const { username } = getAuthSession();
+      const name = username || profileStorage.getName() || playerName || '';
+      if (!name) {
         setHistory({ summary: { totalTests: 0, totalAttempts: 0, averageScore: 0, bestScore: 0 }, attempts: [] });
         return;
       }
       const params = new URLSearchParams();
-      if (id) params.set('playerId', id);
       if (name) params.set('name', name);
       const qs = params.toString();
       const r = await fetch(`http://localhost:5000/api/game/history?${qs}&limit=200`, { cache: 'no-store' });
@@ -651,15 +656,14 @@ export default function StudentDashboard() {
                 ? ` • อันดับ ${att.rank}/${att.totalPlayers}`
                 : '';
               const score = att?.finalScore ?? att?.score ?? 0;
-              const roomName = (att?.roomName && att.roomName !== 'ห้องสำหรับชุดคำถาม') ? att.roomName : null;
-              const title = att?.questionSetTitle || roomName || 'แบบทดสอบ';
-              const subtitle = att?.questionSetTitle && att.questionSetTitle !== title ? att.questionSetTitle : null;
+              const roomName = (att?.roomName && att.roomName !== 'ห้องสำหรับชุดคำถาม') ? att.roomName : 'ห้องแบบทดสอบ';
+              const setTitle = att?.questionSetTitle || 'ชุดข้อสอบ';
               const delKey = `${att?.roomId || 'room'}-${att?.timestamp || idx}-${att?.playerId || att?.playerName || 'me'}`;
               return (
                 <div key={`${att.roomId || 'room'}-${att.timestamp || idx}`} className="backdrop-blur-md bg-white/10 rounded-2xl p-4 border border-white/20 flex items-center justify-between">
                   <div className="min-w-0">
-                    <div className="text-white font-semibold truncate">{title}</div>
-                    <div className="text-blue-200 text-sm truncate">{subtitle || ''}</div>
+                    <div className="text-white font-semibold truncate">{roomName}</div>
+                    <div className="text-blue-200 text-sm truncate">{setTitle}</div>
                     <div className="text-white/70 text-xs">{when}{rankText}</div>
                   </div>
                   <div className="text-right ml-4 shrink-0 flex flex-col items-end gap-2">

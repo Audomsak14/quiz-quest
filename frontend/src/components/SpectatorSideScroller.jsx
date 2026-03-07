@@ -4,7 +4,8 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 // Read-only spectator for the side-scrolling quiz
 // Props: roomId, players (map), questions (array), selectedPlayerId, onClose, onPrev, onNext
 export default function SpectatorSideScroller({ roomId, players = {}, questions = [], selectedPlayerId, onClose, onPrev, onNext }) {
-  const VIEW_W = 1200;
+  // Keep consistent with SideScrollerQuiz so derived world center/offset math matches.
+  const VIEW_W = 1400;
   const VIEW_H = 700;
   const WORLD_W = 3600;
   const GROUND_H = 120;
@@ -13,44 +14,13 @@ export default function SpectatorSideScroller({ roomId, players = {}, questions 
   // ใช้สูตรเดียวกับฝั่งนักเรียนในการวางแท่นและบล็อก (buildSymmetricOffsets + platLevels)
   function buildSymmetricOffsets(count, gap) {
     if (count <= 0) return [];
-    const arr = [];
-    let step = 0;
+    const arr = [0];
+    let step = 1;
     while (arr.length < count) {
-      const distance = (step + 1) * gap;
-      arr.push(distance);
+      arr.push(step * gap);
       if (arr.length >= count) break;
-      arr.push(-distance);
+      arr.push(-step * gap);
       step++;
-    }
-    return arr;
-  }
-
-  function hashSeed(input) {
-    const text = String(input || 'quiz-quest');
-    let hash = 2166136261;
-    for (let i = 0; i < text.length; i++) {
-      hash ^= text.charCodeAt(i);
-      hash = Math.imul(hash, 16777619);
-    }
-    return hash >>> 0;
-  }
-
-  function seededRandomFactory(seedInput) {
-    let t = hashSeed(seedInput) || 1;
-    return () => {
-      t += 0x6D2B79F5;
-      let r = Math.imul(t ^ (t >>> 15), 1 | t);
-      r ^= r + Math.imul(r ^ (r >>> 7), 61 | r);
-      return ((r ^ (r >>> 14)) >>> 0) / 4294967296;
-    };
-  }
-
-  function buildQuestionOffsets(count, gap, seedInput) {
-    const arr = buildSymmetricOffsets(count, gap);
-    const random = seededRandomFactory(seedInput);
-    for (let i = arr.length - 1; i > 0; i--) {
-      const j = Math.floor(random() * (i + 1));
-      [arr[i], arr[j]] = [arr[j], arr[i]];
     }
     return arr;
   }
@@ -63,7 +33,7 @@ export default function SpectatorSideScroller({ roomId, players = {}, questions 
     const needed = count > 1 ? (count - 1) * GAP : 0;
     const world = Math.max(minWorld, LEFT_PAD + RIGHT_PAD + needed + VIEW_W);
     const center = world / 2;
-    const offsets = buildQuestionOffsets(count, GAP, `${roomId}:questions`);
+    const offsets = buildSymmetricOffsets(count, GAP);
 
     const platLevels = [
       { dy: 120, w: 260 },
@@ -71,7 +41,7 @@ export default function SpectatorSideScroller({ roomId, players = {}, questions 
     ];
 
     const plats = [];
-    const blocks = (qArr.length ? qArr : Array.from({ length: count }).map((_, i) => ({ id: `q${i+1}`, text: `Q${i+1}`, choices: ["A","B","C","D"], answerIndex: i % 4, points: 100 })))
+    const blocks = (qArr.length ? qArr : Array.from({ length: count }).map((_, i) => ({ id: `q${i+1}` })))
       .map((q, i) => {
         const off = offsets[i] || 0;
         const level = i % 3; // 0 ground, 1/2 platforms
@@ -82,7 +52,7 @@ export default function SpectatorSideScroller({ roomId, players = {}, questions 
           plats.push({ x: px, y: py, w, h: 18 });
           y = py - 40;
         }
-        return { id: q.id || `q${i+1}`, x: center + off, y };
+        return { id: q.id || `q${i + 1}`, x: center + off, y };
       });
     return { world, center, plats, blocks };
   }, [questions, VIEW_W, GROUND_Y, roomId]);

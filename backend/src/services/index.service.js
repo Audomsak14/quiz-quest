@@ -34,6 +34,10 @@ async function generateUniqueRoomCode() {
 // This is intentionally non-persistent; restarting the backend clears it.
 const liveStateByRoom = new Map();
 
+// Archived live state (in-memory) so teacher can still spectate the last known position
+// for a short time after a player leaves/kicked. Non-persistent; backend restart clears it.
+const archivedLiveStateByRoom = new Map();
+
 // Completion metadata (in-memory) keyed by room and player.
 // Used to return completion durations even though attempts only persist score + timestamp.
 const completionMetaByRoom = new Map();
@@ -58,6 +62,14 @@ function getLiveRoomMap(roomId) {
 	return liveStateByRoom.get(key);
 }
 
+function getArchivedRoomMap(roomId) {
+	const key = Number(roomId);
+	if (!archivedLiveStateByRoom.has(key)) {
+		archivedLiveStateByRoom.set(key, new Map());
+	}
+	return archivedLiveStateByRoom.get(key);
+}
+
 function getCompletionMetaMap(roomId) {
 	const key = Number(roomId);
 	if (!completionMetaByRoom.has(key)) {
@@ -66,9 +78,83 @@ function getCompletionMetaMap(roomId) {
 	return completionMetaByRoom.get(key);
 }
 
+async function persistAttemptFromLiveState(roomId, playerId) {
+	const rid = Number(roomId);
+	const pid = String(playerId);
+	if (!Number.isFinite(rid) || rid <= 0) return;
+	if (!pid) return;
+
+	let live = null;
+	try {
+		const roomMap = getLiveRoomMap(rid);
+		pruneStaleStates(roomMap, { now: Date.now() });
+		live = roomMap.get(pid) || null;
+	} catch {}
+
+	if (!live) return;
+
+	const score = Number.isFinite(Number(live.score)) ? Number(live.score) : 0;
+	const playerName = live.playerName ? String(live.playerName) : null;
+	const nowMs = Date.now();
+
+	// Record elapsed time (best-effort) in memory so /api/game/results can return it.
+	try {
+		const meta = getCompletionMetaMap(rid);
+		const key = `id:${pid}`;
+		const existing = meta.get(key) || {};
+		const hasCompletion = (existing.completionTime != null) && Number.isFinite(Number(existing.completionTime));
+		const startedAt = (typeof existing.startedAt === 'number') ? existing.startedAt : null;
+		const completionTime = hasCompletion
+			? existing.completionTime
+			: (startedAt != null ? Math.max(0, nowMs - startedAt) : null);
+		meta.set(key, { ...existing, completionTime });
+	} catch {}
+
+	// Persist score snapshot so teacher can still see rankings after a player leaves.
+	try {
+		await prisma.$transaction(async (tx) => {
+			await tx.gameAttempt.deleteMany({ where: { roomId: rid, playerId: pid } });
+			await tx.gameAttempt.create({
+				data: {
+					roomId: rid,
+					playerId: pid,
+					playerName,
+					score,
+				},
+			});
+
+			const attempts = await tx.gameAttempt.findMany({
+				where: { roomId: rid },
+				orderBy: [{ score: 'desc' }, { timestamp: 'asc' }],
+			});
+
+			const activePlayers = await tx.roomPlayer.count({
+				where: { roomId: rid, kickedAt: null },
+			});
+
+			for (let index = 0; index < attempts.length; index += 1) {
+				const attempt = attempts[index];
+				await tx.gameAttempt.update({
+					where: { id: attempt.id },
+					data: { rank: index + 1, totalPlayers: activePlayers || attempts.length },
+				});
+			}
+		});
+	} catch {}
+}
+
 function pruneStaleStates(roomMap, { now = Date.now(), maxAgeMs = 30_000 } = {}) {
 	for (const [playerId, state] of roomMap.entries()) {
 		if (!state || typeof state.updatedAt !== 'number' || now - state.updatedAt > maxAgeMs) {
+			roomMap.delete(playerId);
+		}
+	}
+}
+
+function pruneArchivedStates(roomMap, { now = Date.now(), maxAgeMs = 30 * 60_000 } = {}) {
+	for (const [playerId, state] of roomMap.entries()) {
+		const ts = state?.archivedAt;
+		if (!state || typeof ts !== 'number' || now - ts > maxAgeMs) {
 			roomMap.delete(playerId);
 		}
 	}
@@ -80,6 +166,13 @@ function removeLiveState(roomId, playerId) {
 	const key = String(playerId);
 	const roomMap = liveStateByRoom.get(rid);
 	if (!roomMap) return;
+	const existing = roomMap.get(key);
+	if (existing) {
+		try {
+			const archived = getArchivedRoomMap(rid);
+			archived.set(key, { ...existing, archivedAt: Date.now() });
+		} catch {}
+	}
 	roomMap.delete(key);
 }
 
@@ -450,6 +543,8 @@ const roomService = {
 		});
 
 		if (updated.count > 0) {
+			// Persist last known score/time before we clear live-state.
+			await persistAttemptFromLiveState(roomId, String(pid));
 			// Clear any live state and reject further updates from this player id.
 			markKicked(roomId, [String(pid)]);
 			removeLiveState(roomId, String(pid));
@@ -514,6 +609,7 @@ const roomService = {
 		});
 
 		if (updated.count > 0) {
+			await persistAttemptFromLiveState(roomId, String(pid));
 			markKicked(roomId, [String(pid)]);
 			removeLiveState(roomId, String(pid));
 		}
@@ -581,6 +677,7 @@ const gameService = {
 		return {
 			...mapRoom(room),
 			questionSetTitle: room.questionSet?.title || null,
+			questionSetMap: room.questionSet?.map || null,
 			players: room.players.map((player) => ({
 				playerId: toMongoLikeId(player.id),
 				name: player.name,
@@ -835,8 +932,23 @@ const gameService = {
 			}
 		} catch {}
 
+		// Track a best-effort "startedAt" timestamp for elapsed time calculations.
+		try {
+			const meta = getCompletionMetaMap(roomId);
+			const key = `id:${String(playerId)}`;
+			const existing = meta.get(key) || {};
+			if (typeof existing.startedAt !== 'number') {
+				meta.set(key, { ...existing, startedAt: now });
+			}
+		} catch {}
+
 		const roomMap = getLiveRoomMap(roomId);
 		pruneStaleStates(roomMap, { now });
+		// If this player is active again, remove any archived snapshot.
+		try {
+			const archived = getArchivedRoomMap(roomId);
+			archived.delete(playerId);
+		} catch {}
 
 		const prev = roomMap.get(playerId);
 		const next = {
@@ -862,10 +974,32 @@ const gameService = {
 		const roomMap = getLiveRoomMap(rid);
 		const now = Date.now();
 		pruneStaleStates(roomMap, { now });
+		let archivedMap = null;
+		try {
+			archivedMap = getArchivedRoomMap(rid);
+			pruneArchivedStates(archivedMap, { now });
+		} catch { archivedMap = null; }
+
+		// Merge active + archived (active wins) so teacher can still spectate after leave.
+		const mergedPlayers = [];
+		const seen = new Set();
+		for (const p of Array.from(roomMap.values())) {
+			if (!p?.playerId) continue;
+			seen.add(String(p.playerId));
+			mergedPlayers.push(p);
+		}
+		if (archivedMap) {
+			for (const p of Array.from(archivedMap.values())) {
+				if (!p?.playerId) continue;
+				const pid = String(p.playerId);
+				if (seen.has(pid)) continue;
+				mergedPlayers.push(p);
+			}
+		}
 
 		return {
 			roomId: toMongoLikeId(rid),
-			players: Array.from(roomMap.values()).map((p) => ({
+			players: mergedPlayers.map((p) => ({
 				playerId: p.playerId,
 				playerName: p.playerName,
 				x: p.x,
@@ -879,15 +1013,31 @@ const gameService = {
 	},
 };
 
+// Non-destructive: hide a name from the "today participants" list only.
+// This does NOT delete or modify any GameAttempt history.
+// Behavior: hidden until the student plays again (a newer attempt is recorded).
+// Note: in-memory only (resets when the backend restarts).
+// Map<dayKey, Map<nameKey, hiddenAtMs>>
+const hiddenTodayParticipantsByDay = new Map();
+
+const getLocalDayKey = (date = new Date()) => {
+	const yyyy = String(date.getFullYear());
+	const mm = String(date.getMonth() + 1).padStart(2, '0');
+	const dd = String(date.getDate()).padStart(2, '0');
+	return `${yyyy}-${mm}-${dd}`;
+};
+
 const teacherService = {
 	async dashboard() {
 		const todayStart = new Date();
 		todayStart.setHours(0, 0, 0, 0);
 
-		const [studentsJoined, attempts, testsToday] = await Promise.all([
-			prisma.roomPlayer.count({
-				where: { kickedAt: null },
-			}),
+		// Use the same data source as the "รายชื่อนักเรียนที่เข้าร่วมวันนี้" list
+		// so the count and the list are always consistent.
+		const { participants: todayParticipants } = await this.todayParticipants();
+		const { tests: todayTests } = await this.todayTests();
+
+		const [attempts] = await Promise.all([
 			prisma.gameAttempt.findMany({
 				select: {
 					score: true,
@@ -905,11 +1055,6 @@ const teacherService = {
 				orderBy: { timestamp: 'desc' },
 				take: 1000,
 			}),
-			prisma.room.count({
-				where: {
-					createdAt: { gte: todayStart },
-				},
-			}),
 		]);
 
 		const percents = (attempts || []).map((a) => {
@@ -924,15 +1069,17 @@ const teacherService = {
 			: 0;
 
 		return {
-			studentsJoined,
+			studentsJoined: Array.isArray(todayParticipants) ? todayParticipants.length : 0,
 			averageScorePercent: avgPercent,
-			testsToday,
+			testsToday: Array.isArray(todayTests) ? todayTests.length : 0,
 		};
 	},
 
 	async todayParticipants() {
 		const todayStart = new Date();
 		todayStart.setHours(0, 0, 0, 0);
+		const dayKey = getLocalDayKey(todayStart);
+		const hiddenMap = hiddenTodayParticipantsByDay.get(dayKey) || new Map();
 
 		const attempts = await prisma.gameAttempt.findMany({
 			where: {
@@ -949,11 +1096,31 @@ const teacherService = {
 
 		// Group by display name (case-insensitive, normalized) so each student appears once.
 		// Also return how many attempts they did today.
+		const isPlaceholderName = (nm) => {
+			const name = String(nm || '').trim();
+			if (!name) return true;
+			return (
+				/^นักเรียน\s*[A-Z]$/i.test(name) ||
+				/^student\s*[A-Z]$/i.test(name) ||
+				/^ArchiveTest/i.test(name)
+			);
+		};
+
 		const byName = new Map();
 		for (const a of attempts || []) {
 			const nm = normalizeDisplayName(a?.playerName);
 			if (!nm) continue;
+			if (isPlaceholderName(nm)) continue;
 			const key = nm.toLowerCase();
+			const hiddenAt = hiddenMap.get(key);
+			if (typeof hiddenAt === 'number') {
+				const attemptMs = a?.timestamp instanceof Date ? a.timestamp.getTime() : NaN;
+				// If the latest attempt is at/before hiddenAt, keep hidden.
+				// If a newer attempt exists after hiddenAt, show again.
+				if (Number.isFinite(attemptMs) && attemptMs <= hiddenAt) continue;
+				// Auto-unhide once we detect a newer attempt.
+				hiddenMap.delete(key);
+			}
 			const prev = byName.get(key);
 			if (!prev) {
 				// attempts are ordered desc => first seen is the latest pretty name
@@ -964,6 +1131,10 @@ const teacherService = {
 			if (byName.size >= 500) break;
 		}
 
+		// Persist any auto-unhide updates.
+		if (hiddenMap.size) hiddenTodayParticipantsByDay.set(dayKey, hiddenMap);
+		else hiddenTodayParticipantsByDay.delete(dayKey);
+
 		const participants = Array.from(byName.values());
 		participants.sort((a, b) => {
 			const dc = (Number(b?.count) || 0) - (Number(a?.count) || 0);
@@ -972,6 +1143,62 @@ const teacherService = {
 		});
 
 		return { participants };
+	},
+
+	async todayTests() {
+		const todayStart = new Date();
+		todayStart.setHours(0, 0, 0, 0);
+
+		const attempts = await prisma.gameAttempt.findMany({
+			where: {
+				timestamp: { gte: todayStart },
+			},
+			select: {
+				room: {
+					select: {
+						questionSet: { select: { title: true } },
+					},
+				},
+				timestamp: true,
+			},
+			orderBy: { timestamp: 'desc' },
+			take: 5000,
+		});
+
+		const seen = new Set();
+		const tests = [];
+		for (const a of attempts || []) {
+			const title = String(a?.room?.questionSet?.title || '').trim();
+			if (!title) continue;
+			const key = title.toLowerCase();
+			if (seen.has(key)) continue;
+			seen.add(key);
+			tests.push({ title });
+			if (tests.length >= 200) break;
+		}
+
+		return { tests };
+	},
+
+	async deleteTodayParticipant(name) {
+		const target = normalizeDisplayName(name);
+		if (!target) return { hidden: false };
+		const targetKey = target.toLowerCase();
+
+		const todayStart = new Date();
+		todayStart.setHours(0, 0, 0, 0);
+		const dayKey = getLocalDayKey(todayStart);
+		const nowMs = Date.now();
+
+		let hiddenMap = hiddenTodayParticipantsByDay.get(dayKey);
+		if (!hiddenMap) {
+			hiddenMap = new Map();
+			hiddenTodayParticipantsByDay.set(dayKey, hiddenMap);
+		}
+		hiddenMap.set(targetKey, nowMs);
+
+		// Backward compatible response shape (frontend previously read "deleted").
+		return { hidden: true, deleted: 0 };
 	},
 };
 

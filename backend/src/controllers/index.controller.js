@@ -164,6 +164,22 @@ const teacherController = {
 		const data = await teacherService.todayParticipants();
 		res.json({ success: true, ...data });
 	}),
+
+	todayTests: asyncHandler(async (req, res) => {
+		if (req.user?.role !== 'teacher') {
+			return res.status(403).json({ success: false, error: 'Forbidden' });
+		}
+		const data = await teacherService.todayTests();
+		res.json({ success: true, ...data });
+	}),
+
+	deleteTodayParticipant: asyncHandler(async (req, res) => {
+		if (req.user?.role !== 'teacher') {
+			return res.status(403).json({ success: false, error: 'Forbidden' });
+		}
+		const result = await teacherService.deleteTodayParticipant(req.body?.name);
+		res.json({ success: true, ...result });
+	}),
 };
 
 module.exports = {

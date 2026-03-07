@@ -418,7 +418,9 @@ export default function MapGame() {
       
       socketManager.on('connected', () => {
         // Join with explicit role so backend tracks teacher/student
-        const success = socketManager.joinRoom(roomId, playerName, role, providedPlayerId);
+        // Prefer DB-backed roomPlayerId so REST roster + socket state align (prevents duplicates/blinking in spectator/teacher views)
+        const socketPlayerId = roomPlayerId || providedPlayerId;
+        const success = socketManager.joinRoom(roomId, playerName, role, socketPlayerId);
         setIsConnected(success);
       });
 
@@ -546,7 +548,7 @@ export default function MapGame() {
         setIsConnected(false);
       };
     }
-  }, [roomId, playerName, role, providedPlayerId]);
+  }, [roomId, playerName, role, providedPlayerId, roomPlayerId]);
 
   // Failsafe: Poll room status and force leave if not active
   useEffect(() => {
@@ -769,59 +771,69 @@ export default function MapGame() {
 
       // Send game completion to server (socket if available, otherwise REST)
       const elapsedMs = gameStartTime ? Math.max(0, endTime - gameStartTime) : 0;
-      const playerId = socketManager.getPlayerId() || null;
+      // Prefer DB-backed roomPlayerId so REST + socket + teacher views stay aligned
+      const playerId = roomPlayerId || socketManager.getPlayerId() || providedPlayerId || null;
       const playerLabel = playerName || 'Player';
-      const sent = isConnected ? socketManager.completeGame(newScore, elapsedMs, newAnswered.length) : false;
+      // Keep socket UX responsiveness, but ALWAYS persist via REST so teacher results (esp. completion time)
+      // remain accurate even if the player leaves right after finishing.
+      if (isConnected) socketManager.completeGame(newScore, elapsedMs, newAnswered.length);
 
-      if (!sent) {
-        fetch('http://localhost:5000/api/game/complete', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            roomId,
-            playerId,
-            playerName: playerLabel,
-            finalScore: newScore,
-            completionTime: elapsedMs,
-            questionsAnswered: newAnswered.length,
-          }),
+      fetch('http://localhost:5000/api/game/complete', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          roomId,
+          playerId,
+          playerName: playerLabel,
+          finalScore: newScore,
+          completionTime: elapsedMs,
+          questionsAnswered: newAnswered.length,
+        }),
+      })
+        .then((res) => res.json().catch(() => null))
+        .then((data) => {
+          if (data?.success && data?.rankings) {
+            setGameResults(data);
+            return;
+          }
+          // Only apply a local fallback if we don't already have results (e.g., via socket)
+          setGameResults((prev) =>
+            prev?.rankings?.length
+              ? prev
+              : {
+                  roomId,
+                  rankings: [
+                    {
+                      rank: 1,
+                      playerId,
+                      playerName: playerLabel,
+                      finalScore: newScore,
+                      completionTime: elapsedMs,
+                      timestamp: Date.now(),
+                    },
+                  ],
+                }
+          );
         })
-          .then((res) => res.json().catch(() => null))
-          .then((data) => {
-            if (data?.success && data?.rankings) {
-              setGameResults(data);
-            } else {
-              setGameResults({
-                roomId,
-                rankings: [
-                  {
-                    rank: 1,
-                    playerId,
-                    playerName: playerLabel,
-                    finalScore: newScore,
-                    completionTime: elapsedMs,
-                    timestamp: Date.now(),
-                  },
-                ],
-              });
-            }
-          })
-          .catch(() => {
-            setGameResults({
-              roomId,
-              rankings: [
-                {
-                  rank: 1,
-                  playerId,
-                  playerName: playerLabel,
-                  finalScore: newScore,
-                  completionTime: elapsedMs,
-                  timestamp: Date.now(),
-                },
-              ],
-            });
-          });
-      }
+        .catch(() => {
+          setGameResults((prev) =>
+            prev?.rankings?.length
+              ? prev
+              : {
+                  roomId,
+                  rankings: [
+                    {
+                      rank: 1,
+                      playerId,
+                      playerName: playerLabel,
+                      finalScore: newScore,
+                      completionTime: elapsedMs,
+                      timestamp: Date.now(),
+                    },
+                  ],
+                }
+          );
+        });
     }
     
     // Send answer to server
