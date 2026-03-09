@@ -4,7 +4,7 @@ import dynamic from 'next/dynamic';
 import Swal from "sweetalert2";
 import { useRouter, useSearchParams } from "next/navigation";
 import axios from "axios";
-import { withAuth } from "../../lib/auth";
+import { getAuthSession, withAuth } from "../../lib/auth";
 import { FiSave, FiX, FiPlus } from "react-icons/fi";
 
 function CreateNewSetContent() {
@@ -92,15 +92,9 @@ function CreateNewSetContent() {
       points: scorePerQuestion,
     }));
 
-    // ระบุผู้สร้างจาก localStorage ถ้ามี ไม่งั้นใช้ 'anonymous'
-    let createdBy = "anonymous";
-    try {
-      const rawUser = localStorage.getItem("user");
-      if (rawUser) {
-        const user = JSON.parse(rawUser);
-        createdBy = user?.username || user?.email || user?._id || "anonymous";
-      }
-    } catch {}
+    // Legacy field: backend should take createdBy from JWT.
+    // Keep a best-effort value for backward compatibility.
+    const createdBy = (getAuthSession().username || 'anonymous');
 
     setIsLoading(true);
     try {

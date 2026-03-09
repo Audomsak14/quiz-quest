@@ -285,6 +285,84 @@ export default function TeacherDashboard() {
     }
   };
 
+  const formatPlayedAt = (value) => {
+    try {
+      if (!value) return '';
+      const d = new Date(value);
+      if (Number.isNaN(d.getTime())) return '';
+      return d.toLocaleString('th-TH', {
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit',
+      });
+    } catch {
+      return '';
+    }
+  };
+
+  const escapeHtml = (value) => String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;');
+
+  const openTestDetails = async (item) => {
+    try {
+      const title = String(item?.title || '').trim();
+      const playedAtLabel = formatPlayedAt(item?.playedAt);
+      const roomLabel = item?.roomCode ? `Room: ${String(item.roomCode)}` : (item?.roomId ? `Room: ${String(item.roomId)}` : '');
+      const students = Array.isArray(item?.students) ? item.students : [];
+      const total = students.length;
+
+      const rowsHtml = total
+        ? students.map((st, idx) => {
+          const nm = escapeHtml(String(st?.name || '').trim());
+          const sc = Number.isFinite(Number(st?.score)) ? Number(st.score) : 0;
+          const pct = (st?.percent != null && Number.isFinite(Number(st.percent))) ? Number(st.percent).toFixed(2) : null;
+          const right = pct != null ? `${sc} (${pct}%)` : `${sc}`;
+          return `
+            <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;padding:8px 10px;border:1px solid rgba(148,163,184,.35);border-radius:12px;background:rgba(255,255,255,.06);">
+              <div style="min-width:0;display:flex;gap:10px;align-items:center;">
+                <div style="width:26px;height:26px;border-radius:10px;background:rgba(255,255,255,.12);display:flex;align-items:center;justify-content:center;font-weight:800;">${idx + 1}</div>
+                <div style="min-width:0;font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${nm || 'ไม่ระบุชื่อ'}</div>
+              </div>
+              <div style="font-weight:900;white-space:nowrap;">${escapeHtml(right)}</div>
+            </div>
+          `;
+        }).join('')
+        : `<div style="padding:10px;border-radius:12px;border:1px solid rgba(148,163,184,.35);background:rgba(255,255,255,.06);">ยังไม่มีคะแนนบันทึก</div>`;
+
+      const metaBits = [
+        (item?.isToday ? 'วันนี้' : 'ย้อนหลัง'),
+        playedAtLabel,
+        roomLabel,
+      ].filter(Boolean).join(' • ');
+
+      await Swal.fire({
+        title: title ? `คะแนน: ${title}` : 'รายละเอียดคะแนน',
+        html: `
+          <div style="text-align:left;display:flex;flex-direction:column;gap:10px;">
+            <div style="opacity:.85;font-weight:700;">${escapeHtml(metaBits || '')}</div>
+            <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;">
+              <div style="font-weight:800;">นักเรียนทั้งหมด</div>
+              <div style="font-weight:900;">${escapeHtml(String(total))} คน</div>
+            </div>
+            <div style="display:flex;flex-direction:column;gap:8px;max-height:50vh;overflow:auto;padding-right:2px;">${rowsHtml}</div>
+          </div>
+        `,
+        showConfirmButton: true,
+        confirmButtonText: 'ปิด',
+        background: '#0b1220',
+        color: '#fff',
+      });
+    } catch (e) {
+      console.error('openTestDetails failed', e);
+    }
+  };
+
   if (isLoading) {
     return (
       <div className="min-h-screen bg-gradient-to-b from-[#030637] via-[#180161] to-[#FF204E] flex items-center justify-center">
@@ -452,24 +530,65 @@ export default function TeacherDashboard() {
               onMouseEnter={openTodayTests}
               onMouseLeave={scheduleCloseTodayTests}
             >
-              <div className="text-white font-bold mb-2">รายชื่อชุดคำถามที่มีสอบวันนี้</div>
+              <div className="text-white font-bold mb-2">คะแนนนักเรียน (วันนี้ + ย้อนหลัง)</div>
 
               {todayTestsLoading ? (
                 <div className="text-white/80">กำลังโหลดรายการ…</div>
               ) : ((Array.isArray(todayTests) && todayTests.length) ? (
                 <div className="max-h-72 overflow-y-auto space-y-2 pr-1">
                   {todayTests.map((item, idx) => {
-                    const title = String(item?.title || item || '');
+                    const title = String(item?.title || '').trim();
                     if (!title) return null;
+
+                    const playedAtLabel = formatPlayedAt(item?.playedAt);
+                    const roomLabel = item?.roomCode ? `Room: ${String(item.roomCode)}` : (item?.roomId ? `Room: ${String(item.roomId)}` : '');
+                    const students = Array.isArray(item?.students) ? item.students : [];
+
                     return (
-                      <div key={`${title}-${idx}`} className="bg-white/5 border border-white/10 rounded-2xl px-3 py-2 text-white">
-                        <div className="font-semibold truncate">{title}</div>
+                      <div key={`${item?.roomId || title}-${idx}`} className="bg-white/5 border border-white/10 rounded-2xl px-3 py-2 text-white">
+                        <div className="flex items-start justify-between gap-2">
+                          <div className="min-w-0">
+                            <div className="font-semibold truncate">{title}</div>
+                            <div className="text-xs text-white/70 mt-0.5">
+                              {item?.isToday ? 'วันนี้' : 'ย้อนหลัง'}{playedAtLabel ? ` • ${playedAtLabel}` : ''}{roomLabel ? ` • ${roomLabel}` : ''}
+                            </div>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.preventDefault();
+                              e.stopPropagation();
+                              openTestDetails({ ...item, students });
+                            }}
+                            className="shrink-0 text-xs px-3 py-1 rounded-xl bg-white/10 hover:bg-white/20 border border-white/10 font-semibold transition-colors"
+                          >
+                            เพิ่มเติม
+                          </button>
+                        </div>
+
+                        {students.length ? (
+                          <div className="mt-2 space-y-1">
+                            {students.map((st, sIdx) => {
+                              const nm = String(st?.name || '').trim();
+                              if (!nm) return null;
+                              const sc = Number.isFinite(Number(st?.score)) ? Number(st.score) : 0;
+                              return (
+                                <div key={`${nm}-${sIdx}`} className="flex items-center justify-between gap-2 bg-white/5 border border-white/10 rounded-xl px-2 py-1">
+                                  <div className="truncate text-sm font-semibold">{nm}</div>
+                                  <div className="shrink-0 text-sm font-extrabold">{sc}</div>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        ) : (
+                          <div className="mt-2 text-xs text-white/70">ยังไม่มีคะแนนบันทึก</div>
+                        )}
                       </div>
                     );
                   })}
                 </div>
               ) : (
-                <div className="text-white/80">วันนี้ยังไม่มีการทดสอบ</div>
+                <div className="text-white/80">ยังไม่มีประวัติการทดสอบ</div>
               ))}
             </div>
           )}

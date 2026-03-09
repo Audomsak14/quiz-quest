@@ -26,6 +26,8 @@ export default function SideScrollerQuiz() {
   const router = useRouter();
   const searchParams = useSearchParams();
 
+  const [showTouchControls, setShowTouchControls] = useState(false);
+
   const deriveMapVariant = (mapValue) => {
     const raw = String(mapValue || '').trim().toLowerCase();
     if (!raw) return 'sea';
@@ -160,6 +162,68 @@ export default function SideScrollerQuiz() {
   const inputsRef = useRef({ left: false, right: false, jumpHeld: false, jumpPressed: false, jumpPressedAt: 0 });
   const lastLandingAtRef = useRef(0);
   const prevJumpHeldRef = useRef(false);
+
+  // Detect touch/mobile so we can show on-screen controls.
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+
+    const isTouchCapable = () => {
+      try {
+        return (
+          'ontouchstart' in window ||
+          (navigator && typeof navigator.maxTouchPoints === 'number' && navigator.maxTouchPoints > 0)
+        );
+      } catch {
+        return false;
+      }
+    };
+
+    const mql = typeof window.matchMedia === 'function' ? window.matchMedia('(pointer: coarse)') : null;
+
+    const compute = () => {
+      const coarse = mql ? !!mql.matches : isTouchCapable();
+      setShowTouchControls(coarse);
+    };
+
+    compute();
+    window.addEventListener('resize', compute);
+    if (mql?.addEventListener) mql.addEventListener('change', compute);
+    // Safari < 14
+    // eslint-disable-next-line deprecation/deprecation
+    else if (mql?.addListener) mql.addListener(compute);
+
+    return () => {
+      window.removeEventListener('resize', compute);
+      if (mql?.removeEventListener) mql.removeEventListener('change', compute);
+      // eslint-disable-next-line deprecation/deprecation
+      else if (mql?.removeListener) mql.removeListener(compute);
+    };
+  }, []);
+
+  const touchDown = (e) => {
+    try { e.preventDefault(); } catch {}
+  };
+
+  const setLeftPressed = useCallback((pressed) => {
+    inputsRef.current.left = pressed;
+  }, []);
+
+  const setRightPressed = useCallback((pressed) => {
+    inputsRef.current.right = pressed;
+  }, []);
+
+  const setJumpPressed = useCallback((pressed) => {
+    const inp = inputsRef.current;
+    if (pressed) {
+      if (!inp.jumpHeld) {
+        inp.jumpPressed = true;
+        inp.jumpPressedAt = performance.now();
+      }
+      inp.jumpHeld = true;
+    } else {
+      inp.jumpHeld = false;
+    }
+  }, []);
 
   // Other players
   const [otherPlayers, setOtherPlayers] = useState({});
@@ -1485,6 +1549,7 @@ export default function SideScrollerQuiz() {
   }, [currentQuestion, answeredStatus, playerProgress, questionSpots.length, gameStartTime, submitCompletion, timeUp]);
 
   // HUD + Canvas + Modals
+  const touchControlsEnabled = showTouchControls && gameStarted && !showQuestion && !showRankings;
   return (
     <div className="h-[100dvh] overflow-hidden bg-gradient-to-br from-emerald-200 to-teal-200 flex flex-col items-center p-3">
       <div className="w-full max-w-6xl shrink-0 rounded-3xl shadow-xl bg-white/70 backdrop-blur-sm p-3 mb-2 flex items-center justify-between">
@@ -1631,6 +1696,51 @@ export default function SideScrollerQuiz() {
                 }}
                 className="px-4 py-2 rounded-xl bg-indigo-600 text-white hover:bg-indigo-700 shadow focus:outline-none focus:ring-2 focus:ring-indigo-300"
               >กลับหน้าห้อง</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {touchControlsEnabled && (
+        <div className="fixed inset-x-0 bottom-0 z-40 pointer-events-none">
+          <div className="relative w-full h-28">
+            <div className="absolute left-1/2 -translate-x-1/2 bottom-3 flex gap-3 pointer-events-auto">
+              <button
+                type="button"
+                aria-label="เดินซ้าย"
+                onPointerDown={(e) => { touchDown(e); e.currentTarget.setPointerCapture?.(e.pointerId); setLeftPressed(true); }}
+                onPointerUp={(e) => { touchDown(e); setLeftPressed(false); }}
+                onPointerCancel={(e) => { touchDown(e); setLeftPressed(false); }}
+                onPointerLeave={(e) => { touchDown(e); setLeftPressed(false); }}
+                className="select-none touch-none w-20 h-20 rounded-2xl bg-white/70 backdrop-blur-sm border border-white/60 shadow-xl text-gray-800 font-extrabold text-base active:scale-95"
+              >
+                ซ้าย
+              </button>
+              <button
+                type="button"
+                aria-label="เดินขวา"
+                onPointerDown={(e) => { touchDown(e); e.currentTarget.setPointerCapture?.(e.pointerId); setRightPressed(true); }}
+                onPointerUp={(e) => { touchDown(e); setRightPressed(false); }}
+                onPointerCancel={(e) => { touchDown(e); setRightPressed(false); }}
+                onPointerLeave={(e) => { touchDown(e); setRightPressed(false); }}
+                className="select-none touch-none w-20 h-20 rounded-2xl bg-white/70 backdrop-blur-sm border border-white/60 shadow-xl text-gray-800 font-extrabold text-base active:scale-95"
+              >
+                ขวา
+              </button>
+            </div>
+
+            <div className="absolute right-3 bottom-3 pointer-events-auto">
+              <button
+                type="button"
+                aria-label="กระโดด"
+                onPointerDown={(e) => { touchDown(e); e.currentTarget.setPointerCapture?.(e.pointerId); setJumpPressed(true); }}
+                onPointerUp={(e) => { touchDown(e); setJumpPressed(false); }}
+                onPointerCancel={(e) => { touchDown(e); setJumpPressed(false); }}
+                onPointerLeave={(e) => { touchDown(e); setJumpPressed(false); }}
+                className="select-none touch-none w-28 h-20 rounded-2xl bg-white/70 backdrop-blur-sm border border-white/60 shadow-xl text-gray-800 font-extrabold text-base active:scale-95"
+              >
+                กระโดด
+              </button>
             </div>
           </div>
         </div>

@@ -7,7 +7,7 @@ const {
 	gameController,
 	teacherController,
 } = require('../controllers/index.controller');
-const { requireAuth } = require('../middleware/auth.middleware');
+const { requireAuth, requireRole } = require('../middleware/auth.middleware');
 const { validateBody, validateParams } = require('../middleware/validation.middleware');
 
 const router = express.Router();
@@ -96,11 +96,11 @@ const teacherDeleteTodayParticipantSchema = z.object({
 router.post('/auth/register', validateBody(registerSchema), authController.register);
 router.post('/auth/login', validateBody(loginSchema), authController.login);
 
-router.get('/questions/sets', questionSetController.list);
-router.get('/questions/sets/:setId', validateParams(setIdParamSchema), questionSetController.getById);
-router.post('/questions/sets', requireAuth, validateBody(questionSetSchema), questionSetController.create);
-router.put('/questions/sets/:setId', requireAuth, validateParams(setIdParamSchema), validateBody(questionSetSchema), questionSetController.update);
-router.delete('/questions/sets/:setId', requireAuth, validateParams(setIdParamSchema), questionSetController.remove);
+router.get('/questions/sets', requireAuth, requireRole('teacher'), questionSetController.list);
+router.get('/questions/sets/:setId', requireAuth, requireRole('teacher'), validateParams(setIdParamSchema), questionSetController.getById);
+router.post('/questions/sets', requireAuth, requireRole('teacher'), validateBody(questionSetSchema), questionSetController.create);
+router.put('/questions/sets/:setId', requireAuth, requireRole('teacher'), validateParams(setIdParamSchema), validateBody(questionSetSchema), questionSetController.update);
+router.delete('/questions/sets/:setId', requireAuth, requireRole('teacher'), validateParams(setIdParamSchema), questionSetController.remove);
 
 router.post('/rooms', requireAuth, validateBody(roomCreateSchema), roomController.create);
 router.get('/rooms/by-code/:code', roomController.getByCode);
@@ -123,9 +123,9 @@ router.post('/game/complete', validateBody(gameCompleteSchema), gameController.c
 router.post('/game/state', validateBody(gameStateSchema), gameController.upsertState);
 router.get('/game/state/:roomId', validateParams(idParamSchema), gameController.getState);
 
-router.get('/teacher/dashboard', requireAuth, teacherController.dashboard);
-router.get('/teacher/today-participants', requireAuth, teacherController.todayParticipants);
-router.get('/teacher/today-tests', requireAuth, teacherController.todayTests);
-router.post('/teacher/today-participants/delete', requireAuth, validateBody(teacherDeleteTodayParticipantSchema), teacherController.deleteTodayParticipant);
+router.get('/teacher/dashboard', requireAuth, requireRole('teacher'), teacherController.dashboard);
+router.get('/teacher/today-participants', requireAuth, requireRole('teacher'), teacherController.todayParticipants);
+router.get('/teacher/today-tests', requireAuth, requireRole('teacher'), teacherController.todayTests);
+router.post('/teacher/today-participants/delete', requireAuth, requireRole('teacher'), validateBody(teacherDeleteTodayParticipantSchema), teacherController.deleteTodayParticipant);
 
 module.exports = router;

@@ -29,28 +29,28 @@ const authController = {
 };
 
 const questionSetController = {
-	list: asyncHandler(async (_req, res) => {
-		const data = await questionSetService.list();
+	list: asyncHandler(async (req, res) => {
+		const data = await questionSetService.list(req.user);
 		res.json(data);
 	}),
 
 	getById: asyncHandler(async (req, res) => {
-		const data = await questionSetService.getById(Number(req.params.setId));
+		const data = await questionSetService.getById(Number(req.params.setId), req.user);
 		res.json(data);
 	}),
 
 	create: asyncHandler(async (req, res) => {
-		const data = await questionSetService.create(req.body);
+		const data = await questionSetService.create(req.body, req.user);
 		res.status(201).json(data);
 	}),
 
 	update: asyncHandler(async (req, res) => {
-		const data = await questionSetService.update(Number(req.params.setId), req.body);
+		const data = await questionSetService.update(Number(req.params.setId), req.body, req.user);
 		res.json(data);
 	}),
 
 	remove: asyncHandler(async (req, res) => {
-		const data = await questionSetService.remove(Number(req.params.setId));
+		const data = await questionSetService.remove(Number(req.params.setId), req.user);
 		res.json({ success: true, ...data });
 	}),
 };
@@ -152,32 +152,23 @@ const gameController = {
 };
 
 const teacherController = {
-	dashboard: asyncHandler(async (_req, res) => {
-		const stats = await teacherService.dashboard();
+	dashboard: asyncHandler(async (req, res) => {
+		const stats = await teacherService.dashboard(req.user);
 		res.json({ success: true, stats });
 	}),
 
 	todayParticipants: asyncHandler(async (req, res) => {
-		if (req.user?.role !== 'teacher') {
-			return res.status(403).json({ success: false, error: 'Forbidden' });
-		}
-		const data = await teacherService.todayParticipants();
+		const data = await teacherService.todayParticipants(req.user);
 		res.json({ success: true, ...data });
 	}),
 
 	todayTests: asyncHandler(async (req, res) => {
-		if (req.user?.role !== 'teacher') {
-			return res.status(403).json({ success: false, error: 'Forbidden' });
-		}
-		const data = await teacherService.todayTests();
+		const data = await teacherService.todayTests(req.user);
 		res.json({ success: true, ...data });
 	}),
 
 	deleteTodayParticipant: asyncHandler(async (req, res) => {
-		if (req.user?.role !== 'teacher') {
-			return res.status(403).json({ success: false, error: 'Forbidden' });
-		}
-		const result = await teacherService.deleteTodayParticipant(req.body?.name);
+		const result = await teacherService.deleteTodayParticipant(req.body?.name, req.user);
 		res.json({ success: true, ...result });
 	}),
 };

@@ -268,7 +268,9 @@ const authService = {
 			data: {
 				username,
 				name: username,
-				role: payload.role || 'student',
+				// Do NOT bind role at registration.
+				// The UI selects role at login time, and we embed that choice in the JWT.
+				role: 'student',
 				passwordHash,
 			},
 		});
@@ -298,15 +300,17 @@ const authService = {
 			throw appError('Invalid username or password', 401);
 		}
 
-		if (payload.role && payload.role !== user.role) {
-			throw appError('Role does not match account', 403);
-		}
+		// Role is selected at login time (same account can be used for both roles).
+		const selectedRoleRaw = payload.role == null ? 'student' : String(payload.role);
+		const selectedRole = (selectedRoleRaw === 'teacher' || selectedRoleRaw === 'student')
+			? selectedRoleRaw
+			: 'student';
 
 		const token = jwt.sign(
 			{
 				sub: String(user.id),
 				username: user.username,
-				role: user.role,
+				role: selectedRole,
 			},
 			JWT_SECRET,
 			{ expiresIn: '7d' }
@@ -317,15 +321,21 @@ const authService = {
 			user: {
 				id: toMongoLikeId(user.id),
 				username: user.username,
-				role: user.role,
+				role: selectedRole,
 			},
 		};
 	},
 };
 
 const questionSetService = {
-	async list() {
+	async list(user) {
+		const owner = String(user?.username || '').trim();
+		if (!owner) {
+			throw appError('Unauthorized', 401);
+		}
+
 		const sets = await prisma.questionSet.findMany({
+			where: { createdBy: owner },
 			include: { questions: true },
 			orderBy: { createdAt: 'desc' },
 		});
@@ -333,25 +343,35 @@ const questionSetService = {
 		return sets.map(mapQuestionSet);
 	},
 
-	async getById(id) {
+	async getById(id, user) {
+		const owner = String(user?.username || '').trim();
+		if (!owner) {
+			throw appError('Unauthorized', 401);
+		}
+
 		const set = await prisma.questionSet.findUnique({
 			where: { id },
 			include: { questions: true },
 		});
 
-		if (!set) {
+		if (!set || String(set.createdBy || '').trim() !== owner) {
 			throw appError('Question set not found', 404);
 		}
 
 		return mapQuestionSet(set);
 	},
 
-	async create(payload) {
+	async create(payload, user) {
+		const owner = String(user?.username || '').trim();
+		if (!owner) {
+			throw appError('Unauthorized', 401);
+		}
+
 		const data = await prisma.questionSet.create({
 			data: {
 				title: payload.title,
 				description: payload.description || '',
-				createdBy: payload.createdBy || null,
+				createdBy: owner,
 				timeLimit: payload.timeLimit || 30,
 				map: payload.map || null,
 				questions: {
@@ -370,9 +390,14 @@ const questionSetService = {
 		return mapQuestionSet(data);
 	},
 
-	async update(id, payload) {
+	async update(id, payload, user) {
+		const owner = String(user?.username || '').trim();
+		if (!owner) {
+			throw appError('Unauthorized', 401);
+		}
+
 		const existing = await prisma.questionSet.findUnique({ where: { id } });
-		if (!existing) {
+		if (!existing || String(existing.createdBy || '').trim() !== owner) {
 			throw appError('Question set not found', 404);
 		}
 
@@ -384,7 +409,7 @@ const questionSetService = {
 				data: {
 					title: payload.title,
 					description: payload.description || '',
-					createdBy: payload.createdBy || null,
+					createdBy: owner,
 					timeLimit: payload.timeLimit || 30,
 					map: payload.map || null,
 					questions: {
@@ -404,9 +429,14 @@ const questionSetService = {
 		return mapQuestionSet(updated);
 	},
 
-	async remove(id) {
+	async remove(id, user) {
+		const owner = String(user?.username || '').trim();
+		if (!owner) {
+			throw appError('Unauthorized', 401);
+		}
+
 		const existing = await prisma.questionSet.findUnique({ where: { id } });
-		if (!existing) {
+		if (!existing || String(existing.createdBy || '').trim() !== owner) {
 			throw appError('Question set not found', 404);
 		}
 
@@ -1017,8 +1047,22 @@ const gameService = {
 // This does NOT delete or modify any GameAttempt history.
 // Behavior: hidden until the student plays again (a newer attempt is recorded).
 // Note: in-memory only (resets when the backend restarts).
-// Map<dayKey, Map<nameKey, hiddenAtMs>>
-const hiddenTodayParticipantsByDay = new Map();
+// Map<teacherKey, Map<dayKey, Map<nameKey, hiddenAtMs>>>
+const hiddenTodayParticipantsByTeacher = new Map();
+
+const normalizeTeacherKey = (user) => String(user?.username || '').trim().toLowerCase();
+
+const getHiddenMapFor = (teacherKey, dayKey) => {
+	if (!teacherKey) return new Map();
+	if (!hiddenTodayParticipantsByTeacher.has(teacherKey)) {
+		hiddenTodayParticipantsByTeacher.set(teacherKey, new Map());
+	}
+	const byDay = hiddenTodayParticipantsByTeacher.get(teacherKey);
+	if (!byDay.has(dayKey)) {
+		byDay.set(dayKey, new Map());
+	}
+	return byDay.get(dayKey);
+};
 
 const getLocalDayKey = (date = new Date()) => {
 	const yyyy = String(date.getFullYear());
@@ -1028,17 +1072,27 @@ const getLocalDayKey = (date = new Date()) => {
 };
 
 const teacherService = {
-	async dashboard() {
+	async dashboard(user) {
+		const owner = String(user?.username || '').trim();
+		if (!owner) {
+			throw appError('Unauthorized', 401);
+		}
+
 		const todayStart = new Date();
 		todayStart.setHours(0, 0, 0, 0);
 
 		// Use the same data source as the "รายชื่อนักเรียนที่เข้าร่วมวันนี้" list
 		// so the count and the list are always consistent.
-		const { participants: todayParticipants } = await this.todayParticipants();
-		const { tests: todayTests } = await this.todayTests();
+		const { participants: todayParticipants } = await this.todayParticipants(user);
+		const { tests: todayTests } = await this.todayTestTitles(user);
 
 		const [attempts] = await Promise.all([
 			prisma.gameAttempt.findMany({
+				where: {
+					room: {
+						questionSet: { createdBy: owner },
+					},
+				},
 				select: {
 					score: true,
 					room: {
@@ -1075,16 +1129,68 @@ const teacherService = {
 		};
 	},
 
-	async todayParticipants() {
+	async todayTestTitles(user) {
+		const owner = String(user?.username || '').trim();
+		if (!owner) {
+			throw appError('Unauthorized', 401);
+		}
+
+		const todayStart = new Date();
+		todayStart.setHours(0, 0, 0, 0);
+
+		const attempts = await prisma.gameAttempt.findMany({
+			where: {
+				timestamp: { gte: todayStart },
+				room: {
+					questionSet: { createdBy: owner },
+				},
+			},
+			select: {
+				room: {
+					select: {
+						questionSet: { select: { title: true } },
+					},
+				},
+				timestamp: true,
+			},
+			orderBy: { timestamp: 'desc' },
+			take: 5000,
+		});
+
+		const seen = new Set();
+		const tests = [];
+		for (const a of attempts || []) {
+			const title = String(a?.room?.questionSet?.title || '').trim();
+			if (!title) continue;
+			const key = title.toLowerCase();
+			if (seen.has(key)) continue;
+			seen.add(key);
+			tests.push({ title });
+			if (tests.length >= 200) break;
+		}
+
+		return { tests };
+	},
+
+	async todayParticipants(user) {
+		const owner = String(user?.username || '').trim();
+		if (!owner) {
+			throw appError('Unauthorized', 401);
+		}
+		const teacherKey = normalizeTeacherKey(user);
+
 		const todayStart = new Date();
 		todayStart.setHours(0, 0, 0, 0);
 		const dayKey = getLocalDayKey(todayStart);
-		const hiddenMap = hiddenTodayParticipantsByDay.get(dayKey) || new Map();
+		const hiddenMap = getHiddenMapFor(teacherKey, dayKey);
 
 		const attempts = await prisma.gameAttempt.findMany({
 			where: {
 				timestamp: { gte: todayStart },
 				playerName: { not: null },
+				room: {
+					questionSet: { createdBy: owner },
+				},
 			},
 			select: {
 				playerName: true,
@@ -1131,9 +1237,7 @@ const teacherService = {
 			if (byName.size >= 500) break;
 		}
 
-		// Persist any auto-unhide updates.
-		if (hiddenMap.size) hiddenTodayParticipantsByDay.set(dayKey, hiddenMap);
-		else hiddenTodayParticipantsByDay.delete(dayKey);
+		// Note: hiddenMap is already stored per-teacher-per-day.
 
 		const participants = Array.from(byName.values());
 		participants.sort((a, b) => {
@@ -1145,42 +1249,172 @@ const teacherService = {
 		return { participants };
 	},
 
-	async todayTests() {
+	async todayTests(user) {
+		const owner = String(user?.username || '').trim();
+		if (!owner) {
+			throw appError('Unauthorized', 401);
+		}
+
 		const todayStart = new Date();
 		todayStart.setHours(0, 0, 0, 0);
 
+		// Return recent test sessions (rooms) with per-student scores so teachers can
+		// view both today's and past tests from the same popover.
+		const since = new Date();
+		// Keep it bounded: 60 days of history is enough for dashboard.
+		since.setDate(since.getDate() - 60);
+		since.setHours(0, 0, 0, 0);
+
 		const attempts = await prisma.gameAttempt.findMany({
 			where: {
-				timestamp: { gte: todayStart },
+				timestamp: { gte: since },
+				room: {
+					questionSet: { createdBy: owner },
+				},
 			},
 			select: {
+				roomId: true,
+				playerId: true,
+				playerName: true,
+				score: true,
+				timestamp: true,
 				room: {
 					select: {
-						questionSet: { select: { title: true } },
+						id: true,
+						code: true,
+						name: true,
+						createdAt: true,
+						questionSet: {
+							select: {
+								id: true,
+								title: true,
+								questions: { select: { points: true } },
+							},
+						},
 					},
 				},
-				timestamp: true,
 			},
 			orderBy: { timestamp: 'desc' },
-			take: 5000,
+			take: 15000,
 		});
 
-		const seen = new Set();
-		const tests = [];
+		const isPlaceholderName = (nm) => {
+			const name = String(nm || '').trim();
+			if (!name) return true;
+			return (
+				/^นักเรียน\s*[A-Z]$/i.test(name) ||
+				/^student\s*[A-Z]$/i.test(name) ||
+				/^ArchiveTest/i.test(name)
+			);
+		};
+
+		const sessionsByRoom = new Map();
+
 		for (const a of attempts || []) {
-			const title = String(a?.room?.questionSet?.title || '').trim();
+			const roomId = Number(a?.roomId);
+			if (!Number.isInteger(roomId) || roomId <= 0) continue;
+			const qs = a?.room?.questionSet || null;
+			const title = String(qs?.title || '').trim();
 			if (!title) continue;
-			const key = title.toLowerCase();
-			if (seen.has(key)) continue;
-			seen.add(key);
-			tests.push({ title });
-			if (tests.length >= 200) break;
+			const playedAt = a?.timestamp instanceof Date ? a.timestamp : (a?.timestamp ? new Date(a.timestamp) : null);
+			const playedAtMs = playedAt instanceof Date && !Number.isNaN(playedAt.getTime()) ? playedAt.getTime() : null;
+			if (!playedAtMs) continue;
+
+			if (!sessionsByRoom.has(roomId)) {
+				sessionsByRoom.set(roomId, {
+					roomId,
+					roomCode: String(a?.room?.code || ''),
+					roomName: String(a?.room?.name || ''),
+					roomCreatedAt: a?.room?.createdAt instanceof Date ? a.room.createdAt : null,
+					questionSetId: qs?.id != null ? String(qs.id) : null,
+					title,
+					maxScore: calcMaxScoreFromQuestionSet(qs),
+					lastPlayedAtMs: playedAtMs,
+					bestByStudent: new Map(),
+				});
+			}
+
+			const session = sessionsByRoom.get(roomId);
+			if (playedAtMs > (session.lastPlayedAtMs || 0)) session.lastPlayedAtMs = playedAtMs;
+
+			const displayName = normalizeDisplayName(a?.playerName);
+			if (!displayName) continue;
+			if (isPlaceholderName(displayName)) continue;
+
+			const idKey = String(a?.playerId || '').trim();
+			const studentKey = (idKey ? `id:${idKey.toLowerCase()}` : `name:${displayName.toLowerCase()}`);
+
+			const nextScore = Number.isFinite(Number(a?.score)) ? Number(a.score) : 0;
+			const prev = session.bestByStudent.get(studentKey);
+			if (!prev) {
+				session.bestByStudent.set(studentKey, {
+					key: studentKey,
+					name: displayName,
+					score: nextScore,
+					playedAtMs,
+				});
+				continue;
+			}
+
+			// Prefer higher score; if tie, prefer newer.
+			if (nextScore > prev.score || (nextScore === prev.score && playedAtMs > (prev.playedAtMs || 0))) {
+				session.bestByStudent.set(studentKey, {
+					...prev,
+					score: nextScore,
+					playedAtMs,
+					name: displayName || prev.name,
+				});
+			}
 		}
 
-		return { tests };
+		const sessions = Array.from(sessionsByRoom.values())
+			.map((s) => {
+				const students = Array.from(s.bestByStudent.values())
+					.map((st) => {
+						const pct = calcPercentScore(st.score, s.maxScore);
+						return {
+							name: st.name,
+							score: st.score,
+							percent: Number.isFinite(pct) ? Number(pct.toFixed(2)) : 0,
+						};
+					})
+					.sort((a, b) => {
+						if ((b.score || 0) !== (a.score || 0)) return (b.score || 0) - (a.score || 0);
+						return String(a.name || '').localeCompare(String(b.name || ''), 'th');
+					});
+
+				return {
+					roomId: String(s.roomId),
+					roomCode: s.roomCode || null,
+					roomName: s.roomName || null,
+					questionSetId: s.questionSetId,
+					title: s.title,
+					playedAt: new Date(s.lastPlayedAtMs).toISOString(),
+					isToday: s.lastPlayedAtMs >= todayStart.getTime(),
+					maxScore: s.maxScore,
+					students,
+				};
+			})
+			.sort((a, b) => {
+				const at = new Date(a.playedAt).getTime();
+				const bt = new Date(b.playedAt).getTime();
+				if (bt !== at) return bt - at;
+				return String(a.title || '').localeCompare(String(b.title || ''), 'th');
+			});
+
+		// Keep response bounded for the popover.
+		const limited = sessions.slice(0, 50);
+
+		return { tests: limited };
 	},
 
-	async deleteTodayParticipant(name) {
+	async deleteTodayParticipant(name, user) {
+		const owner = String(user?.username || '').trim();
+		if (!owner) {
+			throw appError('Unauthorized', 401);
+		}
+		const teacherKey = normalizeTeacherKey(user);
+
 		const target = normalizeDisplayName(name);
 		if (!target) return { hidden: false };
 		const targetKey = target.toLowerCase();
@@ -1189,12 +1423,7 @@ const teacherService = {
 		todayStart.setHours(0, 0, 0, 0);
 		const dayKey = getLocalDayKey(todayStart);
 		const nowMs = Date.now();
-
-		let hiddenMap = hiddenTodayParticipantsByDay.get(dayKey);
-		if (!hiddenMap) {
-			hiddenMap = new Map();
-			hiddenTodayParticipantsByDay.set(dayKey, hiddenMap);
-		}
+		const hiddenMap = getHiddenMapFor(teacherKey, dayKey);
 		hiddenMap.set(targetKey, nowMs);
 
 		// Backward compatible response shape (frontend previously read "deleted").

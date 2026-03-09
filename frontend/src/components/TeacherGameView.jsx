@@ -43,6 +43,104 @@ export default function TeacherGameView() {
   const [leaderboardSnapshot, setLeaderboardSnapshot] = useState([]);
   const leaderboardSnapshotRef = useRef([]);
 
+  // Stable join-order tracking (per room, per tab)
+  // We key primarily by normalized display name (legacy behavior already coalesces duplicates by name)
+  // and fall back to playerId.
+  const joinSeqRef = useRef(new Map()); // Map<joinKey, { seq: number, joinedAt: number }>
+  const joinSeqCounterRef = useRef(1);
+  const [joinSeqTick, setJoinSeqTick] = useState(0);
+
+  const normalizeDisplayName = useCallback((value) => {
+    return String(value || '')
+      .normalize('NFKC')
+      .replace(/[\u200B-\u200D\uFEFF]/g, '')
+      .replace(/\s+/g, ' ')
+      .trim();
+  }, []);
+
+  const makeJoinKey = useCallback((p) => {
+    const nm = normalizeDisplayName(p?.name || p?.playerName);
+    if (nm) return `name:${nm.toLowerCase()}`;
+    const pid = String(p?.playerId || '').trim();
+    if (pid) return `id:${pid}`;
+    return '';
+  }, [normalizeDisplayName]);
+
+  const ensureJoinSeq = useCallback((p) => {
+    const key = makeJoinKey(p);
+    if (!key) return;
+    if (joinSeqRef.current.has(key)) return;
+    joinSeqRef.current.set(key, { seq: joinSeqCounterRef.current++, joinedAt: Date.now() });
+    setJoinSeqTick((t) => t + 1);
+  }, [makeJoinKey]);
+
+  // Restore join order from this tab/session so refresh won't reshuffle the roster.
+  useEffect(() => {
+    if (authStatus !== 'ok') return;
+    if (!roomId) return;
+    if (typeof window === 'undefined') return;
+    try {
+      const key = `teacher_room_${roomId}_joinSeq`;
+      const raw = window.sessionStorage.getItem(key);
+      if (!raw) return;
+      const parsed = JSON.parse(raw);
+      const entries = Array.isArray(parsed?.entries) ? parsed.entries : [];
+      const counter = Number(parsed?.counter);
+
+      const nextMap = new Map();
+      for (const e of entries) {
+        const k = String(e?.key || '').trim();
+        const seq = Number(e?.seq);
+        const joinedAt = Number(e?.joinedAt);
+        if (!k) continue;
+        if (!Number.isFinite(seq)) continue;
+        nextMap.set(k, { seq, joinedAt: Number.isFinite(joinedAt) ? joinedAt : Date.now() });
+      }
+      if (nextMap.size) {
+        joinSeqRef.current = nextMap;
+        if (Number.isFinite(counter) && counter > 0) {
+          joinSeqCounterRef.current = counter;
+        } else {
+          const maxSeq = Math.max(...Array.from(nextMap.values()).map((v) => Number(v?.seq) || 0), 0);
+          joinSeqCounterRef.current = Math.max(1, maxSeq + 1);
+        }
+        setJoinSeqTick((t) => t + 1);
+      }
+    } catch {}
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [authStatus, roomId]);
+
+  // Persist join order whenever it changes.
+  useEffect(() => {
+    if (authStatus !== 'ok') return;
+    if (!roomId) return;
+    if (typeof window === 'undefined') return;
+    try {
+      const key = `teacher_room_${roomId}_joinSeq`;
+      const entries = Array.from(joinSeqRef.current.entries()).map(([k, v]) => ({
+        key: k,
+        seq: Number(v?.seq) || 0,
+        joinedAt: Number(v?.joinedAt) || 0,
+      }));
+      window.sessionStorage.setItem(key, JSON.stringify({
+        ts: Date.now(),
+        counter: joinSeqCounterRef.current,
+        entries,
+      }));
+    } catch {}
+  }, [authStatus, roomId, joinSeqTick]);
+
+  // Backfill join order from any already-known students
+  useEffect(() => {
+    try {
+      for (const s of Object.values(students || {})) {
+        if (!s) continue;
+        if (s?.role === 'teacher') continue;
+        ensureJoinSeq(s);
+      }
+    } catch {}
+  }, [students, ensureJoinSeq]);
+
   const getGlobalSnapshot = useCallback(() => {
     if (typeof window === 'undefined') return [];
     const bag = window.__qqTeacherLeaderboardSnapshots;
@@ -135,6 +233,7 @@ export default function TeacherGameView() {
           if (data.room.status) setGameStarted(data.room.status === 'active');
 
           if (Array.isArray(data.room.players)) {
+            try { data.room.players.forEach((p) => ensureJoinSeq(p)); } catch {}
             const ids = data.room.players.map((p) => String(p?.playerId)).filter(Boolean);
             setRosterIds(ids);
             const now = Date.now();
@@ -203,6 +302,7 @@ export default function TeacherGameView() {
         if (!data?.success || !Array.isArray(data?.players)) return;
 
         const now = Date.now();
+        try { data.players.forEach((p) => ensureJoinSeq(p)); } catch {}
         setStudents((prev) => {
           const next = { ...(prev || {}) };
           data.players.forEach((p) => {
@@ -301,6 +401,7 @@ export default function TeacherGameView() {
       if (data?.status) setGameStarted(data.status === "active");
       if (typeof data?.competition !== 'undefined') setCompetitionMode(!!data.competition);
       if (Array.isArray(data?.players)) {
+        try { data.players.forEach((p) => ensureJoinSeq(p)); } catch {}
         const now = Date.now();
         setStudents((prev) => {
           const next = { ...(prev || {}) };
@@ -316,6 +417,7 @@ export default function TeacherGameView() {
 
     const onPlayerJoined = (p) => {
       if (p?.role === "teacher") return;
+      try { ensureJoinSeq(p); } catch {}
       setStudents((prev) => ({
         ...prev,
         [p.playerId]: {
@@ -480,19 +582,34 @@ export default function TeacherGameView() {
   // Dedupe UI list for generic names (keep most recent by lastSeen)
   const displayedStudents = useMemo(() => {
     const arr = Object.values(students || {});
-    // Sort by last seen (latest first)
-    arr.sort((a, b) => (b.lastSeen || 0) - (a.lastSeen || 0));
-    // 1) Dedupe by playerId (keep most recent)
-    const byId = new Map();
-    for (const s of arr) byId.set(s.playerId, s);
-    // 2) Additionally, coalesce exact same display name (keep most recent) to avoid visual duplicates
-    const byName = new Map();
-    for (const s of byId.values()) {
-      const nm = (s.name || '').trim();
-      if (!byName.has(nm)) byName.set(nm, s);
+    // Pick the freshest row for each joinKey, but render list in join order.
+    // Sort by lastSeen (latest first) so first seen per key is freshest.
+    arr.sort((a, b) => (Number(b?.lastSeen) || 0) - (Number(a?.lastSeen) || 0));
+
+    const byKey = new Map();
+    for (const s of arr) {
+      if (!s) continue;
+      if (s?.role === 'teacher') continue;
+      const key = makeJoinKey(s) || (s?.playerId ? `id:${String(s.playerId)}` : '');
+      if (!key) continue;
+      if (!byKey.has(key)) byKey.set(key, s);
     }
-    return Array.from(byName.values());
-  }, [students]);
+
+    const list = Array.from(byKey.values());
+    list.sort((a, b) => {
+      const ka = makeJoinKey(a);
+      const kb = makeJoinKey(b);
+      const sa = joinSeqRef.current.get(ka)?.seq ?? 999999;
+      const sb = joinSeqRef.current.get(kb)?.seq ?? 999999;
+      if (sa !== sb) return sa - sb;
+      const ta = joinSeqRef.current.get(ka)?.joinedAt ?? 0;
+      const tb = joinSeqRef.current.get(kb)?.joinedAt ?? 0;
+      if (ta !== tb) return ta - tb;
+      return String(a?.name || '').localeCompare(String(b?.name || ''), 'th');
+    });
+
+    return list;
+  }, [students, makeJoinKey, joinSeqTick]);
 
   // Spectator overlay should not show duplicate dots for the same student.
   // This can happen when a client initially joins with a temporary playerId,
@@ -532,42 +649,27 @@ export default function TeacherGameView() {
     [displayedStudents]
   );
 
-  const rankByPlayerId = useMemo(() => {
-    const map = new Map();
-
-    // If backend has already computed rankings (from /api/game/complete), use those.
-    if (Array.isArray(gameResults?.rankings) && gameResults.rankings.length) {
-      for (const r of gameResults.rankings) {
-        if (!r?.playerId) continue;
-        const rank = Number(r.rank);
-        if (Number.isFinite(rank)) map.set(String(r.playerId), rank);
-      }
-      return map;
+  const resultsIdSet = useMemo(() => {
+    const set = new Set();
+    if (!Array.isArray(gameResults?.rankings)) return set;
+    for (const r of gameResults.rankings) {
+      if (r?.playerId != null) set.add(String(r.playerId));
     }
+    return set;
+  }, [gameResults]);
 
-    // Otherwise, compute a best-effort live ranking from current state.
-    // Primary: score desc; Secondary: answered desc; Tertiary: updatedAt asc.
-    const list = [...(displayedStudents || [])];
-    list.sort((a, b) => {
-      const scoreDiff = (Number(b?.score) || 0) - (Number(a?.score) || 0);
-      if (scoreDiff !== 0) return scoreDiff;
-
-      const answeredDiff = (Number(b?.answered) || 0) - (Number(a?.answered) || 0);
-      if (answeredDiff !== 0) return answeredDiff;
-
-      const timeDiff = (Number(a?.updatedAt) || Number(a?.lastSeen) || 0) - (Number(b?.updatedAt) || Number(b?.lastSeen) || 0);
-      if (timeDiff !== 0) return timeDiff;
-
-      return String(a?.name || '').localeCompare(String(b?.name || ''), 'th');
-    });
-
-    list.forEach((s, idx) => {
-      if (!s?.playerId) return;
-      map.set(String(s.playerId), idx + 1);
-    });
-
-    return map;
-  }, [displayedStudents, gameResults]);
+  const resultsCoverAllActivePlayers = useMemo(() => {
+    // When results contain all active players, backend ranking is safe to trust.
+    // Otherwise, results are partial (only finished players) and we must keep
+    // showing everyone using live state.
+    const active = (displayedStudents || [])
+      .filter((s) => !s?.left)
+      .map((s) => String(s?.playerId || ''))
+      .filter(Boolean);
+    if (active.length === 0) return false;
+    if (resultsIdSet.size === 0) return false;
+    return active.every((id) => resultsIdSet.has(id));
+  }, [displayedStudents, resultsIdSet]);
 
   const finalScoreByPlayerId = useMemo(() => {
     const map = new Map();
@@ -579,6 +681,63 @@ export default function TeacherGameView() {
     }
     return map;
   }, [gameResults]);
+
+  const rankByPlayerId = useMemo(() => {
+    const map = new Map();
+
+    // If backend has already computed rankings for *everyone* (end-of-game), use those.
+    if (resultsCoverAllActivePlayers && Array.isArray(gameResults?.rankings) && gameResults.rankings.length) {
+      for (const r of gameResults.rankings) {
+        if (!r?.playerId) continue;
+        const rank = Number(r.rank);
+        if (Number.isFinite(rank)) map.set(String(r.playerId), rank);
+      }
+      return map;
+    }
+
+    // Otherwise, compute a best-effort live ranking from current state.
+    // Requirement:
+    // - Before any score updates: keep join order.
+    // - After score updates: rank by score desc; then answered desc; tie-break by join order.
+    const list = [...(displayedStudents || [])];
+
+    // Use finalScore for finished players (if present), otherwise live score.
+    const scoreOf = (s) => {
+      const pid = String(s?.playerId || '').trim();
+      if (pid && finalScoreByPlayerId.has(pid)) return Number(finalScoreByPlayerId.get(pid)) || 0;
+      return Number(s?.score) || 0;
+    };
+
+    const hasAnyScore = list.some((s) => scoreOf(s) > 0 || (Number(s?.answered) || 0) > 0);
+
+    list.sort((a, b) => {
+      const ka = makeJoinKey(a);
+      const kb = makeJoinKey(b);
+      const ja = joinSeqRef.current.get(ka)?.seq ?? 999999;
+      const jb = joinSeqRef.current.get(kb)?.seq ?? 999999;
+
+      if (!hasAnyScore) {
+        if (ja !== jb) return ja - jb;
+        return String(a?.name || '').localeCompare(String(b?.name || ''), 'th');
+      }
+
+      const scoreDiff = scoreOf(b) - scoreOf(a);
+      if (scoreDiff !== 0) return scoreDiff;
+
+      const answeredDiff = (Number(b?.answered) || 0) - (Number(a?.answered) || 0);
+      if (answeredDiff !== 0) return answeredDiff;
+
+      if (ja !== jb) return ja - jb;
+      return String(a?.name || '').localeCompare(String(b?.name || ''), 'th');
+    });
+
+    list.forEach((s, idx) => {
+      if (!s?.playerId) return;
+      map.set(String(s.playerId), idx + 1);
+    });
+
+    return map;
+  }, [displayedStudents, finalScoreByPlayerId, gameResults, makeJoinKey, joinSeqTick, resultsCoverAllActivePlayers]);
 
   const finishedIdSet = useMemo(() => {
     const set = new Set();
@@ -602,35 +761,125 @@ export default function TeacherGameView() {
   }, [displayedStudents, gameResults, roomInfo?.questions]);
 
   const leaderboardRows = useMemo(() => {
-    if (Array.isArray(gameResults?.rankings) && gameResults.rankings.length) {
-      return gameResults.rankings.map((r) => ({
-        playerId: String(r.playerId),
-        playerName: r.playerName,
-        finalScore: Number(r.finalScore) || 0,
-        rank: Number(r.rank) || null,
-        completionTime: r.completionTime,
-        timestamp: r.timestamp,
-      }));
+    // Always show everyone in the room.
+    // IMPORTANT: backend results may use a different playerId than the live roster
+    // (temp id vs DB-backed id). When a student leaves, this can create duplicates.
+    // Fix: coalesce by normalized display name (fallback to playerId) and keep the best row.
+
+    const rows = [];
+    for (const s of displayedStudents || []) {
+      const pid = String(s?.playerId || '');
+      const liveScore = Number(s?.score) || 0;
+      const finalScore = finalScoreByPlayerId.get(pid) ?? liveScore;
+      rows.push({
+        playerId: pid,
+        playerName: s?.name,
+        finalScore: Number(finalScore) || 0,
+        completionTime: null,
+        timestamp: null,
+        finished: false,
+        _joinKey: makeJoinKey(s),
+      });
     }
 
-    const rows = (displayedStudents || []).map((s) => ({
-      playerId: String(s.playerId),
-      playerName: s.name,
-      finalScore: finalScoreByPlayerId.get(String(s.playerId)) ?? (Number(s.score) || 0),
-      rank: rankByPlayerId.get(String(s.playerId)) || null,
-      completionTime: null,
-      timestamp: null,
-    }));
+    if (Array.isArray(gameResults?.rankings)) {
+      for (const r of gameResults.rankings) {
+        const pid = String(r?.playerId || '').trim();
+        const nm = normalizeDisplayName(r?.playerName);
+        if (!pid && !nm) continue;
 
-    rows.sort((a, b) => {
-      const ra = Number(a.rank) || 9999;
-      const rb = Number(b.rank) || 9999;
-      if (ra !== rb) return ra - rb;
+        // Try to find an existing row with same name first (preferred), else same playerId.
+        const keyByName = nm ? `name:${nm.toLowerCase()}` : '';
+        let idx = -1;
+        if (keyByName) {
+          idx = rows.findIndex((x) => (normalizeDisplayName(x?.playerName).toLowerCase() === nm.toLowerCase()));
+        }
+        if (idx < 0 && pid) {
+          idx = rows.findIndex((x) => String(x?.playerId || '') === pid);
+        }
+
+        const resultRow = {
+          playerId: pid,
+          playerName: r?.playerName,
+          finalScore: Number(r?.finalScore) || 0,
+          completionTime: r?.completionTime ?? null,
+          timestamp: r?.timestamp ?? null,
+          finished: true,
+          _joinKey: (keyByName || (pid ? `id:${pid}` : '')),
+        };
+
+        if (idx >= 0) {
+          const cur = rows[idx] || {};
+          // Prefer finished; prefer higher score; keep name if missing.
+          const best = (() => {
+            if (resultRow.finished && !cur.finished) return { ...cur, ...resultRow };
+            if ((Number(resultRow.finalScore) || 0) > (Number(cur.finalScore) || 0)) return { ...cur, ...resultRow };
+            return { ...resultRow, ...cur, finished: cur.finished || resultRow.finished };
+          })();
+          // Preserve joinKey if we already had one from live roster
+          best._joinKey = cur._joinKey || resultRow._joinKey;
+          rows[idx] = best;
+        } else {
+          rows.push(resultRow);
+        }
+
+        try { ensureJoinSeq({ playerId: pid, name: r?.playerName, playerName: r?.playerName }); } catch {}
+      }
+    }
+
+    // Final dedupe (safety): coalesce by normalized name, fallback to playerId.
+    const bestByKey = new Map();
+    const keyOf = (x) => {
+      const nm = normalizeDisplayName(x?.playerName);
+      if (nm) return `name:${nm.toLowerCase()}`;
+      const pid = String(x?.playerId || '').trim();
+      if (pid) return `id:${pid}`;
+      return '';
+    };
+
+    for (const r of rows) {
+      const k = keyOf(r);
+      if (!k) continue;
+      const prev = bestByKey.get(k);
+      if (!prev) {
+        bestByKey.set(k, r);
+        continue;
+      }
+      // Pick the better row: finished first, then higher score, then earlier join.
+      const a = prev;
+      const b = r;
+      const pickB = (() => {
+        if (!!b.finished !== !!a.finished) return !!b.finished;
+        const sd = (Number(b.finalScore) || 0) - (Number(a.finalScore) || 0);
+        if (sd !== 0) return sd > 0;
+        const ka = a._joinKey || makeJoinKey({ playerId: a.playerId, name: a.playerName });
+        const kb = b._joinKey || makeJoinKey({ playerId: b.playerId, name: b.playerName });
+        const ja = joinSeqRef.current.get(ka)?.seq ?? 999999;
+        const jb = joinSeqRef.current.get(kb)?.seq ?? 999999;
+        return jb < ja;
+      })();
+      bestByKey.set(k, pickB ? b : a);
+    }
+
+    const finalRows = Array.from(bestByKey.values());
+
+    const hasAnyScore = finalRows.some((x) => (Number(x?.finalScore) || 0) > 0);
+    finalRows.sort((a, b) => {
+      if (hasAnyScore) {
+        const sd = (Number(b?.finalScore) || 0) - (Number(a?.finalScore) || 0);
+        if (sd !== 0) return sd;
+      }
+      const ka = a._joinKey || makeJoinKey({ playerId: a.playerId, name: a.playerName });
+      const kb = b._joinKey || makeJoinKey({ playerId: b.playerId, name: b.playerName });
+      const ja = joinSeqRef.current.get(ka)?.seq ?? 999999;
+      const jb = joinSeqRef.current.get(kb)?.seq ?? 999999;
+      if (ja !== jb) return ja - jb;
       return String(a.playerName || '').localeCompare(String(b.playerName || ''), 'th');
     });
 
-    return rows;
-  }, [displayedStudents, finalScoreByPlayerId, gameResults, rankByPlayerId]);
+    // Assign ranks based on the final sorted order.
+    return finalRows.map((r, idx) => ({ ...r, rank: idx + 1 }));
+  }, [displayedStudents, ensureJoinSeq, finalScoreByPlayerId, gameResults, joinSeqTick, makeJoinKey, normalizeDisplayName]);
 
   // Synchronous snapshot (avoids races where effects don't run before the next state update clears rows)
   if (Array.isArray(leaderboardRows) && leaderboardRows.length > 0) {
